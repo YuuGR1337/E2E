@@ -335,7 +335,7 @@ test('the commit list is derived from git, and caps out loudly', () => {
 });
 
 test('the clone URL in the recipe comes from package.json, not from memory', () => {
-  assert.equal(repositoryUrl(pkg), 'https://github.com/trajectiq-ai/E2E');
+  assert.equal(repositoryUrl(pkg), 'https://github.com/xsignon-secure/E2E');
   assert.equal(repositoryUrl({ repository: 'https://example.com/x.git' }), 'https://example.com/x');
   assert.equal(repositoryUrl({}), null);
 });

@@ -210,6 +210,44 @@ export interface CreateServerOptions {
  */
 export const READ_ONLY_TOOLS: readonly string[] = ['list-tests', 'get-failure', 'analyze-history'];
 
+/**
+ * Named tool sets for PW_MCP_TOOLS / --tools. Every tool definition costs
+ * context on each request (all eleven are ~5k tokens), so a client that
+ * only fixes failing suites can load the core loop alone.
+ */
+export const TOOL_PROFILES: Readonly<Record<string, readonly string[]>> = {
+  all: TOOLS.map((tool) => tool.name),
+  core: ['run-test', 'get-run-status', 'get-failure', 'suggest-fix', 'diagnose-flaky', 'list-tests'],
+  triage: ['run-test', 'get-run-status', 'get-failure', 'diagnose-flaky', 'analyze-history', 'list-tests'],
+  inspect: ['inspect-page', 'validate-selector', 'compare-visual-state'],
+  author: ['list-tests', 'inspect-page', 'validate-selector', 'generate-e2e-test', 'run-test'],
+};
+
+/**
+ * Resolve a comma-separated list of tool names and profile names
+ * (`core,inspect-page`). Returns undefined (all tools) for an empty spec;
+ * unknown entries are reported, not fatal.
+ */
+export function resolveToolSelection(spec: string | undefined): { tools?: string[]; unknown: string[] } {
+  const entries = (spec ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (entries.length === 0) return { unknown: [] };
+  const known = new Set(TOOLS.map((tool) => tool.name));
+  const selected = new Set<string>();
+  const unknown: string[] = [];
+  for (const entry of entries) {
+    const profile = TOOL_PROFILES[entry.toLowerCase()];
+    if (profile) profile.forEach((name) => selected.add(name));
+    else if (known.has(entry)) selected.add(entry);
+    else unknown.push(entry);
+  }
+  if (selected.size === 0) return { unknown };
+  // Keep the registry's order so tools/list is stable.
+  return { tools: TOOLS.map((tool) => tool.name).filter((name) => selected.has(name)), unknown };
+}
+
 export function resolveDefaultProjectRoot(): string {
   const fromEnv = process.env.PW_MCP_PROJECT_ROOT;
   // A host that collects PW_MCP_PROJECT_ROOT via MCPB user_config but does
@@ -237,7 +275,18 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   const store = options.store ?? createToolStore();
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
-  const enabled = options.tools ? TOOLS.filter((tool) => options.tools?.includes(tool.name)) : TOOLS;
+  let selection = options.tools;
+  if (!selection && process.env.PW_MCP_TOOLS) {
+    const resolved = resolveToolSelection(process.env.PW_MCP_TOOLS);
+    if (resolved.unknown.length > 0) {
+      logger.warn('PW_MCP_TOOLS names unknown tools or profiles; ignoring them', {
+        unknown: resolved.unknown,
+        profiles: Object.keys(TOOL_PROFILES),
+      });
+    }
+    selection = resolved.tools;
+  }
+  const enabled = selection ? TOOLS.filter((tool) => selection.includes(tool.name)) : TOOLS;
   for (const tool of enabled) {
     server.registerTool(
       tool.name,
@@ -332,6 +381,6 @@ export async function startServer(): Promise<void> {
   logger.info('connected over stdio', {
     version: SERVER_VERSION,
     projectRoot: resolveDefaultProjectRoot(),
-    tools: TOOLS.map((tool) => tool.name),
+    tools: resolveToolSelection(process.env.PW_MCP_TOOLS).tools ?? TOOLS.map((tool) => tool.name),
   });
 }

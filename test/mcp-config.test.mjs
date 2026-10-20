@@ -29,5 +29,5 @@ test('project .agents/mcp.json registers the published server command', () => {
   const server = raw.mcpServers['playwright-e2e'];
   assert.ok(server, 'expected mcpServers["playwright-e2e"]');
   assert.equal(server.command, 'npx');
-  assert.deepEqual(server.args, ['-y', 'github:trajectiq-ai/E2E']);
+  assert.deepEqual(server.args, ['-y', 'github:xsignon-secure/E2E']);
 });

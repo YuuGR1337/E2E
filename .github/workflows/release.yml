@@ -27,8 +27,8 @@ name: Assemble release
 # assembled and published **unsigned** and the job says so, so a missing key
 # cannot block a release. Add them with:
 #
-#   gh secret set MCPB_KEY  --repo trajectiq-ai/E2E < ~/signing/key.pem
-#   gh secret set MCPB_CERT --repo trajectiq-ai/E2E < ~/signing/cert.pem
+#   gh secret set MCPB_KEY  --repo xsignon-secure/E2E < ~/signing/key.pem
+#   gh secret set MCPB_CERT --repo xsignon-secure/E2E < ~/signing/cert.pem
 #
 # Creating a release and uploading its assets needs `contents: write`, which
 # this job requests for itself. If that is refused with "Resource not accessible

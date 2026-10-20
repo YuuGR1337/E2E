@@ -1,6 +1,6 @@
 # playwright-e2e-mcp
 
-[![CI](https://github.com/trajectiq-ai/E2E/actions/workflows/ci.yml/badge.svg)](https://github.com/trajectiq-ai/E2E/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/trajectiq-ai/E2E)](https://github.com/trajectiq-ai/E2E/releases) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.trajectiq--ai%2FE2E-2563eb)](https://registry.modelcontextprotocol.io/)
+[![CI](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml/badge.svg)](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/xsignon-secure/E2E)](https://github.com/xsignon-secure/E2E/releases) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.xsignon--secure%2FE2E-2563eb)](https://registry.modelcontextprotocol.io/)
 [![M8ven Score](https://m8ven.ai/badge/mcp/trajectiq-ai/e2e)](https://m8ven.ai/mcp/trajectiq-ai/e2e?s=readme)
 
 An [MCP](https://modelcontextprotocol.io) server that **diagnoses and fixes failing Playwright
@@ -26,9 +26,13 @@ What it does that a browser-driving MCP or a raw `npx playwright test` does not:
   (`getByRole('button', { name: 'Proceed to checkout' })`), re-runs the test and reverts the
   edit if it is still red. When nothing on the page plausibly matches, it says the element is
   missing and does not patch the test to hide a real bug.
-- **Flakiness across runs.** Every run is recorded locally; `analyze-history` separates
-  tests that flip (flaky) from ones that started failing (regressed) or always fail (broken),
-  and groups failures that share one cause.
+- **Flakiness with evidence.** `diagnose-flaky` repeats failing tests in one process and
+  gives a verdict per test; with `isolate: true` it re-runs them alone to tell a shared-state
+  bug that only bites in parallel from a race inside the test. Every run is recorded locally;
+  `analyze-history` separates tests that flip (flaky) from ones that started failing
+  (regressed) or always fail (broken), and groups failures that share one cause.
+- **In CI too.** A [GitHub Action and `ci` command](#ci-github-action-and-ci-command) post the
+  same diagnosis, flaky verdict and fix diffs to the job summary and the PR.
 - **Pages behind a login.** Every page tool accepts a Playwright `storageState`, extra
   headers, and click/fill steps to reach a modal or a later step.
 - **Small on the wire.** In the [benchmark](bench/RESULTS.md), diagnosing and fixing one
@@ -48,12 +52,12 @@ work side by side in the same client.
 `https://playwright-e2e-mcp.vercel.app/api/mcp` returns for a client that sends the
 bearer token (without one, only `list-tests` and `get-failure` are listed):
 
-![Token-protected endpoint: initialize handshake and the tool list](https://raw.githubusercontent.com/trajectiq-ai/E2E/main/docs/demo-endpoint.png)
+![Token-protected endpoint: initialize handshake and the tool list](https://raw.githubusercontent.com/xsignon-secure/E2E/main/docs/demo-endpoint.png)
 
 **A real test run** — `run-test` served over stdio by `npx -y playwright-e2e-mcp`
 against the bundled `examples/sample-test.spec.ts` (actual output, unedited):
 
-![run-test result: 4 passed, 0 failed, 5.1s](https://raw.githubusercontent.com/trajectiq-ai/E2E/main/docs/demo-run-test.png)
+![run-test result: 4 passed, 0 failed, 5.1s](https://raw.githubusercontent.com/xsignon-secure/E2E/main/docs/demo-run-test.png)
 
 Images are rendered with `node scripts/gen-demo-images.mjs`: the run-test card is real
 captured output; the endpoint card is an illustration of the authenticated listing.
@@ -66,9 +70,9 @@ and every other MCP client — pick whichever route fits:
 | Route | How |
 | --- | --- |
 | **npm (canonical, fastest)** | `npx -y playwright-e2e-mcp` |
-| **MCP Registry** (registry-aware clients discover it automatically) | `io.github.trajectiq-ai/E2E` — [listing](https://registry.modelcontextprotocol.io/) |
-| **Any client, no npm account needed** | `npx -y github:trajectiq-ai/E2E#v0.2.2` (pin a release tag) |
-| **Claude Desktop, zero Node setup** | double-click the [`.mcpb` extension](https://github.com/trajectiq-ai/E2E/releases) |
+| **MCP Registry** (registry-aware clients discover it automatically) | `io.github.xsignon-secure/E2E` — [listing](https://registry.modelcontextprotocol.io/) |
+| **Any client, no npm account needed** | `npx -y github:xsignon-secure/E2E#v0.3.0` (pin a release tag) |
+| **Claude Desktop, zero Node setup** | double-click the [`.mcpb` extension](https://github.com/xsignon-secure/E2E/releases) |
 | **Remote-only clients (ChatGPT connectors)** | `https://playwright-e2e-mcp.vercel.app/api/mcp` |
 
 One line for the common clients:
@@ -77,6 +81,9 @@ One line for the common clients:
 claude mcp add playwright-e2e -- npx -y playwright-e2e-mcp
 code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","playwright-e2e-mcp"]}'
 ```
+
+Only need the fix loop? `--tools=core` (or `PW_MCP_TOOLS=core`) exposes six tools and
+halves the tool-definition context; see [Configuration](#configuration).
 
 Details and per-client config: [Installation](#installation) ·
 [MCP client configuration](#mcp-client-configuration).
@@ -283,14 +290,21 @@ and write a red-highlighted diff image for review.
 | Argument | Type | Description |
 | --- | --- | --- |
 | `testFiles` | string[] | Tests to diagnose (`file:line` supported). Defaults to the tests that failed in the most recent run |
-| `runs` | number | Times to run them, `2–10` (default `3`) |
+| `runs` | number | Repetitions, `2–10` (default `3`) |
+| `isolate` | boolean | Also tell parallelism bugs from flakiness: repeat fully parallel (`workers` default `4`), then repeat the failing tests with one worker |
+| `separateProcesses` | boolean | Start a fresh Playwright process per repetition instead of one `--repeat-each` process (slower; for flakes that depend on global setup or a cold start) |
 | `browser` / `headed` / `workers` / `config` | — | As with `run-test` |
-| `timeoutMs` | number | Hard wall-clock limit **per run** (default `120000`) |
+| `timeoutMs` | number | Hard wall-clock limit **per repetition** (default `120000`); one `--repeat-each` process gets this × `runs` |
 | `projectRoot` | string | Project directory |
 
-Every run executes with `--retries=0` and auto-retry disabled, so each result is
-honest evidence. The response contains a per-run table (status, duration, first
-failure), the count of **distinct normalized error signatures**, and one of:
+All repetitions run in **one Playwright process** with `--repeat-each` and
+`--retries=0`, so each attempt is honest evidence and the browser and workers
+start once instead of once per run (about 25% faster on the integration fixture,
+more for suites with expensive setup). A small extra reporter records every
+attempt, because Playwright's JSON report keeps only one result per test.
+
+The verdict is **per test**: a table of passes, failures, duration spread and
+first error for each test, plus the verdict block for the worst one:
 
 - **❌ CONSISTENTLY FAILING** — failed every run (same error → reproducible bug,
   different errors → still broken, just noisy). Fix it; it is not flaky.
@@ -299,7 +313,17 @@ failure), the count of **distinct normalized error signatures**, and one of:
   instability).
 - **✅ NOT REPRODUCING** — passed every re-run; the original failure was one-off.
 
-The last run is stored, so `get-failure` can analyze it immediately afterwards.
+With `isolate: true` a second table compares each failing test **in parallel**
+and **alone**:
+
+| Reading | Meaning |
+| --- | --- |
+| 🔀 fails only in parallel | Passes every run alone: shared state between tests (same account, DB rows, files, ports). Give each worker its own data or run the file serially |
+| ⏱️ flaky even alone | The race is inside the test or the app: missing `await`, asserting before the UI settles |
+| ❌ fails alone too | Not a parallelism problem; a real bug |
+
+Each repetition is recorded in the run history, and the last failing run is
+stored, so `analyze-history` and `get-failure` work right afterwards.
 
 ### `suggest-fix`
 
@@ -367,11 +391,11 @@ Requirements:
 
 **No npm account needed** — install straight from GitHub (the `prepare` script
 builds `dist/` automatically on install). Pin a release tag: an unpinned
-`github:trajectiq-ai/E2E` runs whatever is on the default branch at that moment.
+`github:xsignon-secure/E2E` runs whatever is on the default branch at that moment.
 
 ```bash
-npx -y github:trajectiq-ai/E2E#v0.2.2
-npm install -D github:trajectiq-ai/E2E#v0.2.2 @playwright/test   # or as a project dependency
+npx -y github:xsignon-secure/E2E#v0.3.0
+npm install -D github:xsignon-secure/E2E#v0.3.0 @playwright/test   # or as a project dependency
 npx playwright install chromium
 ```
 
@@ -379,11 +403,11 @@ Or grab the packaged tarball from the repo's **GitHub Releases** page and instal
 it locally:
 
 ```bash
-npm install -D https://github.com/trajectiq-ai/E2E/releases/download/v0.2.2/playwright-e2e-mcp-0.2.2.tgz
+npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.3.0/playwright-e2e-mcp-0.3.0.tgz
 ```
 
 Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io/)** as
-`io.github.trajectiq-ai/E2E` — registry-aware clients discover it there, and every
+`io.github.xsignon-secure/E2E` — registry-aware clients discover it there, and every
 `v*` release tag republishes the entry from CI via [`server.json`](server.json).
 
 ### MCP client configuration
@@ -395,7 +419,7 @@ Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io
   "mcpServers": {
     "playwright-e2e": {
       "command": "npx",
-      "args": ["-y", "github:trajectiq-ai/E2E#v0.2.2"],
+      "args": ["-y", "github:xsignon-secure/E2E#v0.3.0"],
       "env": { "PW_MCP_PROJECT_ROOT": "/absolute/path/to/your/project" }
     }
   }
@@ -409,8 +433,8 @@ when the client launches it somewhere else (e.g. your home directory).
 **Codex / VS Code / Copilot CLIs:**
 
 ```bash
-codex mcp add playwright-e2e -- npx -y github:trajectiq-ai/E2E#v0.2.2
-code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:trajectiq-ai/E2E#v0.2.2"]}'
+codex mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.0
+code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:xsignon-secure/E2E#v0.3.0"]}'
 ```
 
 Codex's defaults fight this server: the first launch clones the repo and runs
@@ -421,13 +445,13 @@ Codex's defaults fight this server: the first launch clones the repo and runs
 ```toml
 [mcp_servers.playwright-e2e]
 command = "npx"
-args = ["-y", "github:trajectiq-ai/E2E#v0.2.2"]
+args = ["-y", "github:xsignon-secure/E2E#v0.3.0"]
 startup_timeout_sec = 60
 tool_timeout_sec = 600
 ```
 
 **Claude Desktop (one-click):** download and double-click the `.mcpb` Desktop
-Extension attached to the [latest release](https://github.com/trajectiq-ai/E2E/releases) —
+Extension attached to the [latest release](https://github.com/xsignon-secure/E2E/releases) —
 the bundle ships its own dependencies, so no Node setup is required. On install it
 asks you to pick your **project root** (required, no default: choose the project
 folder, not your home directory) and wires it
@@ -436,7 +460,7 @@ into `PW_MCP_PROJECT_ROOT`, so the tools point at a real project from the first 
 **Claude Code:**
 
 ```bash
-claude mcp add playwright-e2e -- npx -y github:trajectiq-ai/E2E#v0.2.2
+claude mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.0
 ```
 
 **Gemini CLI / Qwen Code:** paste the `mcpServers` block above into
@@ -545,11 +569,60 @@ Redeploy after a change: merge to `main`. Vercel's Git integration deploys
 every push, so there is no token to manage and no CLI step — watch the
 `Vercel` commit status for the deployment result.
 
+## CI: GitHub Action and `ci` command
+
+The same diagnosis runs without an agent. `playwright-e2e-mcp ci` runs the
+suite (auto-retry once, so flaky tests are reported as flaky, not failed),
+optionally drafts `suggest-fix` diffs and a flaky verdict for the failures, and
+writes one Markdown report to stdout, to `--output`, and to the GitHub job
+summary when `GITHUB_STEP_SUMMARY` is set. Exit code `0` passed, `1` tests
+failed, `2` the run itself failed.
+
+```bash
+npx -y playwright-e2e-mcp ci --flaky-runs 3 --suggest 2 --output report.md
+npx -y playwright-e2e-mcp ci --help
+```
+
+As a GitHub Action, it adds the report to the job summary and keeps one PR
+comment up to date when the run fails:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write   # only for the PR comment
+steps:
+  - uses: actions/checkout@v6
+  - uses: actions/setup-node@v6
+    with: { node-version: 24 }
+  - run: npm ci && npx playwright install --with-deps chromium
+  - uses: xsignon-secure/E2E@v0.3.0
+    with:
+      flaky-runs: 3      # 0 skips the flaky verdict
+      suggest: 2         # suggest-fix diffs for the first 2 failures
+      # args: --browser chromium tests/checkout
+```
+
+Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`,
+`fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`, `report`.
+
+## Docker
+
+```bash
+docker build -t playwright-e2e-mcp .
+docker run -i --rm -v "$PWD:/work" playwright-e2e-mcp            # stdio MCP server
+docker run --rm -v "$PWD:/work" playwright-e2e-mcp ci            # CI report
+```
+
+The image is based on `mcr.microsoft.com/playwright:v1.63.0-noble`, so its
+browsers match Playwright 1.63. Mount your project at `/work`; its own
+`node_modules` provide `@playwright/test`.
+
 ## Configuration
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, flaky, history, list), `inspect` (page, selector, visual), `author` (list, page, selector, generate, run). All eleven tool definitions cost about 5.2k tokens of context per request; `core` costs about 2.4k |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |
 | `PW_MCP_ALLOWED_ROOTS` | — | Extra directories a caller may pass as `projectRoot` (`:`-separated, `;` on Windows). Anything outside these and the default root is rejected |
@@ -698,7 +771,9 @@ helpers, the **trace reader** (synthetic trace.zip: error, failed action, DOM sn
 `*.network` failed-request parsing, console error/warning events), the **image diff**
 (PNG round-trip, regions, color shift, dimension changes), the **change analyzer**
 (selector extraction, git + mtime paths), the **flaky verdict logic**
-(failure signatures, CONSISTENTLY FAILING / FLAKY / NOT REPRODUCING / NO TESTS RAN),
+(failure signatures, CONSISTENTLY FAILING / FLAKY / NOT REPRODUCING / NO TESTS RAN,
+per-test grouping of repeat attempts and the parallel-vs-alone reading), the `ci`
+argument parser and tool profiles,
 the **HTTP bridge** (token, restricted mode, Host allowlist), the **security
 regressions** (sandbox escapes, argument smuggling, symlink writes, code injection,
 SSRF ranges, env scrubbing, decode limits), the `.mcpb` manifest, the `.mcpb` zip
@@ -724,7 +799,10 @@ that only appear end-to-end:
 - `get-failure` trace diagnostics: DOM at failure, the 404 network request,
   the `console.error` message, diagnosis and next steps,
 - auto-retry turning a first-run failure into `PASSED (1 flaky)`,
-- `diagnose-flaky` verdict **FLAKY** (2 of 3 runs) with retries disabled,
+- `diagnose-flaky` verdict **FLAKY** (2 of 3 runs) with retries disabled, in one
+  `--repeat-each` process, and `isolate` reading a shared-slot test as "fails only in parallel",
+- `--tools=` profiles trimming `tools/list`, and the `ci` command's exit code, report,
+  `--output` file and GitHub job summary,
 - `generate-e2e-test` writing its scaffold, plus error paths
   (missing test path, unknown tool, unreachable server).
 
@@ -804,8 +882,8 @@ published **unsigned**, with a notice in the run and a line saying so in the
 notes. Add both — the private key stays out of the repository and out of the logs:
 
 ```bash
-gh secret set MCPB_KEY  --repo trajectiq-ai/E2E < ~/signing/key.pem
-gh secret set MCPB_CERT --repo trajectiq-ai/E2E < ~/signing/cert.pem
+gh secret set MCPB_KEY  --repo xsignon-secure/E2E < ~/signing/key.pem
+gh secret set MCPB_CERT --repo xsignon-secure/E2E < ~/signing/cert.pem
 ```
 
 Creating the release and uploading its assets needs `contents: write`, which the
@@ -814,8 +892,8 @@ job requests for itself; if it is refused, the run names the setting to change.
 ### Verifying a published release
 
 ```bash
-git checkout v0.2.2 && npm ci && npm run mcpb
-npm run release:verify -- v0.2.2
+git checkout v0.3.0 && npm ci && npm run mcpb
+npm run release:verify -- v0.3.0
 ```
 
 The release notes promise that the tag rebuilds the published bundle byte for
@@ -842,7 +920,7 @@ legitimately different.
 npm run skill:package                    # ../agensi-skill-<version>/, ready to upload
 npm run skill:zip                        # only the archive: dist-skill/playwright-e2e-mcp.zip
 npm run skill:check                      # build, then compare every copy
-npm run skill:check -- ../agensi-skill-0.2.2
+npm run skill:check -- ../agensi-skill-0.3.0
 ```
 
 `skill/` is an [Agent Skill](https://agentskills.io/specification) — the

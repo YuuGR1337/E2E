@@ -1,0 +1,84 @@
+name: Playwright E2E diagnosis
+description: Run a Playwright suite and post a classified diagnosis (file:line, failure kind, flaky verdict, fix diffs) to the job summary and the PR.
+author: xsignon-secure
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  project-root:
+    description: Directory that holds playwright.config.* (default the workspace)
+    default: .
+  args:
+    description: Extra arguments for `playwright-e2e-mcp ci`, e.g. "--browser chromium --workers 2 tests/checkout"
+    default: ''
+  flaky-runs:
+    description: Repeat failing tests this many times (2-10) for a flaky verdict; 0 skips it
+    default: '3'
+  suggest:
+    description: Draft suggest-fix diffs for the first N failures (0-5)
+    default: '2'
+  comment:
+    description: Post (or update) one PR comment with the report when the run fails
+    default: 'true'
+  fail-on-failure:
+    description: Fail the step when tests fail
+    default: 'true'
+  version:
+    description: playwright-e2e-mcp version to run from npm
+    default: 0.3.0
+  github-token:
+    description: Token for the PR comment (needs pull-requests write)
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: 0 passed, 1 tests failed, 2 the run itself failed
+    value: ${{ steps.diagnose.outputs.exit-code }}
+  report:
+    description: Path of the Markdown report
+    value: ${{ steps.diagnose.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - id: diagnose
+      shell: bash
+      working-directory: ${{ inputs.project-root }}
+      env:
+        PW_E2E_VERSION: ${{ inputs.version }}
+        PW_E2E_ARGS: ${{ inputs.args }}
+        PW_E2E_FLAKY: ${{ inputs.flaky-runs }}
+        PW_E2E_SUGGEST: ${{ inputs.suggest }}
+      run: |
+        report="$RUNNER_TEMP/playwright-e2e-report.md"
+        extra=()
+        if [ "$PW_E2E_FLAKY" != "0" ]; then extra+=(--flaky-runs "$PW_E2E_FLAKY"); fi
+        extra+=(--suggest "$PW_E2E_SUGGEST")
+        # Word-split args on purpose: it is a list of flags and paths.
+        # shellcheck disable=SC2086
+        set +e
+        npx -y "playwright-e2e-mcp@$PW_E2E_VERSION" ci --output "$report" "${extra[@]}" $PW_E2E_ARGS
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+
+    - if: inputs.comment == 'true' && github.event_name == 'pull_request' && steps.diagnose.outputs.exit-code != '0'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPORT: ${{ steps.diagnose.outputs.report }}
+      run: |
+        # One comment per PR, edited on every run instead of piling up.
+        gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$REPORT" --edit-last --create-if-none \
+          || echo "::warning::Could not comment on the PR (token needs pull-requests: write)."
+
+    - if: inputs.fail-on-failure == 'true' && steps.diagnose.outputs.exit-code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.diagnose.outputs.exit-code }}
+      run: |
+        echo "::error::Playwright run failed (exit $CODE). See the job summary for the diagnosis."
+        exit 1

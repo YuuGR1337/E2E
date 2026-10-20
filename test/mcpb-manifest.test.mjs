@@ -22,7 +22,7 @@ test('manifest declares required core fields', () => {
   assert.equal(manifest.name, pkg.name);
   assert.equal(manifest.version, pkg.version);
   assert.equal(manifest.description, pkg.description);
-  assert.equal(manifest.author.name, 'trajectiq-ai');
+  assert.equal(manifest.author.name, 'xsignon-secure');
   assert.ok(manifest.server, 'server block required');
 });
 

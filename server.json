@@ -1,20 +1,20 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.trajectiq-ai/E2E",
+  "name": "io.github.xsignon-secure/E2E",
   "title": "Playwright E2E MCP",
-  "description": "Diagnose and fix failing Playwright tests: trace analysis, verified locator fixes, flaky ranking.",
-  "version": "0.2.2",
-  "websiteUrl": "https://github.com/trajectiq-ai/E2E#readme",
+  "description": "Diagnose and fix failing Playwright tests: trace analysis, verified fixes, per-test flaky verdicts.",
+  "version": "0.3.0",
+  "websiteUrl": "https://github.com/xsignon-secure/E2E#readme",
   "repository": {
     "source": "github",
-    "url": "https://github.com/trajectiq-ai/E2E",
-    "id": "1404865822"
+    "url": "https://github.com/xsignon-secure/E2E",
+    "id": "1427445609"
   },
   "packages": [
     {
       "registryType": "npm",
       "identifier": "playwright-e2e-mcp",
-      "version": "0.2.2",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       }

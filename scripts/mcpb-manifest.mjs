@@ -23,8 +23,8 @@ export function buildManifest(packageJson) {
     display_name: 'Playwright E2E MCP',
     version: packageJson.version,
     description: packageJson.description,
-    author: { name: 'trajectiq-ai', url: 'https://github.com/trajectiq-ai' },
-    homepage: 'https://github.com/trajectiq-ai/E2E#readme',
+    author: { name: 'xsignon-secure', url: 'https://github.com/xsignon-secure' },
+    homepage: 'https://github.com/xsignon-secure/E2E#readme',
     license: packageJson.license ?? 'MIT',
     keywords: ['mcp', 'playwright', 'e2e', 'testing'],
     server: {

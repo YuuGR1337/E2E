@@ -1,6 +1,6 @@
 ---
 name: playwright-e2e-mcp
-description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, signed-in page inspection and local run history. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a test is flaky or which tests are unstable, repair a selector that no longer matches, write a new Playwright test, or check a page for visual regressions.
+description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism bugs from races, signed-in page inspection and local run history. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a test is flaky or which tests are unstable, repair a selector that no longer matches, write a new Playwright test, or check a page for visual regressions.
 ---
 
 # Playwright E2E with playwright-e2e-mcp
@@ -13,9 +13,11 @@ and concrete next steps. It can also propose and apply a verified fix for a brok
 locator, inspect pages behind a login, run long suites in the background and keep
 a local history of every run.
 
-This skill needs playwright-e2e-mcp 0.2.0 or newer. If `suggest-fix`,
-`get-run-status` or `analyze-history` is missing, the server is an older version:
-use the steps that do not need those tools and tell the user to update it.
+This skill is written for playwright-e2e-mcp 0.3.0 and works with 0.2.0 or
+newer. If `suggest-fix`, `get-run-status` or `analyze-history` is missing, the
+server is older than 0.2.0: use the steps that do not need those tools and tell
+the user to update it. `diagnose-flaky`'s per-test table and `isolate` option
+arrived in 0.3.0.
 
 ## Before you start
 
@@ -24,9 +26,13 @@ use the steps that do not need those tools and tell the user to update it.
    `validate-selector`, `list-tests`, `generate-e2e-test`,
    `compare-visual-state`, `diagnose-flaky` and `analyze-history` (your client
    may prefix them, e.g. `mcp__playwright-e2e__run-test`).
-2. If they are missing, stop and tell the user the MCP server is not connected.
-   Point them to `references/setup.md` for the one-line install for their client.
-   Do not fall back to shelling out to `npx playwright test` unless the user asks.
+2. If they are all missing, stop and tell the user the MCP server is not
+   connected. Point them to `references/setup.md` for the one-line install for
+   their client. Do not fall back to shelling out to `npx playwright test` unless
+   the user asks. If only some are missing, the server may run a smaller tool
+   profile (`--tools=core` exposes `run-test`, `get-run-status`, `get-failure`,
+   `suggest-fix`, `diagnose-flaky` and `list-tests`); work with what is there and
+   mention the profile when a task needs a page tool.
 3. Every tool except `get-run-status` takes an optional `projectRoot`. Leave it
    out unless the user works in a sub-project; the server defaults to `PW_MCP_PROJECT_ROOT` or its working
    directory, and rejects any root outside its allowed roots.
@@ -108,9 +114,10 @@ against a live `url`.
 Start with `analyze-history` (default view `flaky`) to see which tests flip
 between pass and fail across recorded runs, which regressed, and which are simply
 broken; `view: "patterns"` groups failures that share a cause. Then call
-`diagnose-flaky` on the worst one (optionally `{ "testFiles": [...], "runs": 5 }`; with no
-`testFiles` it takes the tests that failed in the last run). It runs with retries
-disabled and returns one verdict:
+`diagnose-flaky` on the worst ones (optionally `{ "testFiles": [...], "runs": 5 }`;
+with no `testFiles` it takes the tests that failed in the last run). It repeats
+them with retries disabled, in one Playwright process, and returns a table with
+one verdict **per test** (passes, failures, duration spread, first error):
 
 - **CONSISTENTLY FAILING**: not flaky; treat it as a real failure (core loop).
 - **FLAKY**: some runs passed. Same error signature each time points to a real
@@ -120,8 +127,22 @@ disabled and returns one verdict:
   sleeps.
 - **NOT REPRODUCING**: passed every run. Report that the failure was one-off.
 
-`get-failure` works on the last diagnose run straight after. If there is little
-history yet, collect some first with `run-test` and `args: ["--repeat-each=5"]`.
+When a test is FLAKY and the suite runs in parallel, call `diagnose-flaky` again
+with `isolate: true`. It repeats the tests fully parallel, then repeats the
+failing ones with one worker, and reads each one:
+
+- **fails only in parallel**: the test shares state with others (same user or
+  account, DB rows, files, ports, a global fixture). Fix the data isolation, for
+  example per-worker data from `testInfo.workerIndex`; do not just serialize the
+  whole suite.
+- **flaky even alone**: the race is inside the test or the app.
+- **fails alone too**: a real bug, not parallelism.
+
+Pass `separateProcesses: true` only when the flake seems tied to global setup or
+a cold start, since one process per run is slower. `get-failure` works on the
+last failing diagnose run straight after, and each repetition is recorded in the
+history, so `diagnose-flaky` with `runs: 5` is also the quickest way to seed
+history for `analyze-history`.
 
 Every `run-test`, `diagnose-flaky` and `suggest-fix` run is recorded in
 `<project>/.playwright-e2e-mcp/history.jsonl` on the user's machine;
@@ -136,6 +157,10 @@ pass/fail timeline.
   declares, from recent git changes, and reports each selector's source. Review the
   file it writes, then `run-test` it. Pass `write: false` to preview without
   writing.
+- **Set up CI:** when the user wants the same diagnosis on every pull request,
+  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.3.0`) or the
+  `npx -y playwright-e2e-mcp ci` command in `references/setup.md`. It writes the
+  run, flaky verdicts and fix diffs to the job summary and one PR comment.
 - **Visual regression:** `compare-visual-state` with `url` and a `name`. The first
   call saves a baseline under `.pw-mcp/visual/`; later calls report changed
   regions and color shifts and write a diff image. Use `action: "baseline"` only

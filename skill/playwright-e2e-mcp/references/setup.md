@@ -5,9 +5,11 @@ This skill only gives the agent instructions. The tools come from the
 
 ## Requirements
 
-- playwright-e2e-mcp **0.2.0 or newer**. `suggest-fix`, `get-run-status`,
-  `analyze-history`, verified locators and signed-in page inspection arrived in
-  0.2.0. Check with `npx -y playwright-e2e-mcp --version`.
+- playwright-e2e-mcp **0.2.0 or newer**, 0.3.0 recommended. `suggest-fix`,
+  `get-run-status`, `analyze-history`, verified locators and signed-in page
+  inspection arrived in 0.2.0; per-test flaky verdicts, `isolate`, tool profiles
+  and the `ci` command in 0.3.0. Check with
+  `npx -y playwright-e2e-mcp --version`.
 
 - Node.js 20 or newer.
 - A project with `@playwright/test` installed and a browser available:
@@ -16,7 +18,7 @@ This skill only gives the agent instructions. The tools come from the
 ## Install the server
 
 The server is published on npm as `playwright-e2e-mcp` and in the official MCP
-Registry as `io.github.trajectiq-ai/E2E`. Pin a version in shared configs
+Registry as `io.github.xsignon-secure/E2E`. Pin a version in shared configs
 (`playwright-e2e-mcp@<version>`) so every machine runs the same build.
 
 **Claude Code**
@@ -40,7 +42,7 @@ claude mcp add playwright-e2e -- npx -y playwright-e2e-mcp
 ```
 
 Claude Desktop also has a one-click `.mcpb` extension on the project's
-[GitHub releases](https://github.com/trajectiq-ai/E2E/releases); it asks for the
+[GitHub releases](https://github.com/xsignon-secure/E2E/releases); it asks for the
 project root on install.
 
 **Codex CLI**
@@ -74,6 +76,7 @@ Set these in the server's `env` block. None of them are secrets except
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server working directory | Default project root for every tool |
+| `PW_MCP_TOOLS` | all | Tools to expose: names and/or profiles `core`, `triage`, `inspect`, `author` (same as the `--tools=` flag). `core` halves the tool-definition context |
 | `PW_MCP_ALLOWED_ROOTS` | none | Extra directories allowed as `projectRoot` (`:`-separated, `;` on Windows) |
 | `PW_MCP_BLOCK_PRIVATE_URLS` | off for stdio | `1` makes the URL tools refuse loopback, private-network and cloud-metadata addresses |
 | `PW_MCP_STORAGE_STATE` | none | Default Playwright storageState JSON (inside the project) for the page tools, so signed-in pages open logged in |
@@ -94,3 +97,24 @@ Ask the agent to "list my Playwright tests". It should call `list-tests` and
 return files and titles. Clients that show MCP prompts also list
 `/fix-failing-test` and `/triage-flaky-tests`. If it says the tools are missing, the server is not
 connected: restart the client after editing its config.
+
+## CI (0.3.0+)
+
+The same diagnosis runs without an agent:
+
+```bash
+npx -y playwright-e2e-mcp ci --flaky-runs 3 --suggest 2 --output report.md
+```
+
+Exit code 0 means passed, 1 tests failed, 2 the run itself failed. On GitHub
+Actions it also writes to the job summary. As an Action:
+
+```yaml
+- uses: xsignon-secure/E2E@v0.3.0
+  with:
+    flaky-runs: 3
+    suggest: 2
+```
+
+It keeps one PR comment up to date when the run fails (needs
+`pull-requests: write`).

@@ -2,7 +2,7 @@ name: Publish to MCP Registry
 
 # Publishes server.json to the official MCP Registry
 # (registry.modelcontextprotocol.io) using GitHub Actions OIDC — no
-# secrets or accounts required; the io.github.trajectiq-ai/* namespace is
+# secrets or accounts required; the io.github.xsignon-secure/* namespace is
 # granted because the workflow runs inside this repository.
 #
 # Runs on every release tag (version stamped from the tag) and on

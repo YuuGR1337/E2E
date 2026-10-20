@@ -294,7 +294,7 @@ async function callTool(client, name, args, timeoutMs = 150_000, meta) {
 /* ------------------------------------------------------------------ */
 
 function cleanFixture() {
-  const stale = ['test-results', 'playwright-report', 'blob-report', '.pw-mcp', '.playwright-e2e-mcp', '.auth', 'tests/generated', 'tests/.flaky-marker', 'tests/heal.spec.ts'];
+  const stale = ['test-results', 'playwright-report', 'blob-report', '.pw-mcp', '.playwright-e2e-mcp', '.auth', 'tests/generated', 'tests/.flaky-marker', 'tests/heal.spec.ts', 'tests/slot.spec.ts', 'tests/.slot-lock'];
   for (const entry of stale) {
     rmSync(path.join(fixtureRoot, entry), { recursive: true, force: true });
   }
@@ -508,8 +508,37 @@ async function phaseTestRuns(client, origin) {
   const diagnosis = await callTool(client, 'diagnose-flaky', { testFiles: ['tests/flaky.spec.ts'], runs: 3 }, 360_000);
   contains('diagnose-flaky runs with retries disabled', diagnosis.text, 'Playwright retries disabled');
   contains('diagnose-flaky verdict: FLAKY (2 of 3)', diagnosis.text, '**FLAKY** — 2 of 3 run(s) passed');
-  const passedRows = (diagnosis.text.match(/✅ passed/g) ?? []).length;
-  check('diagnose-flaky table shows 2 passes + 1 failure', passedRows >= 2 && diagnosis.text.includes('❌ failed'), `passed rows: ${passedRows}`);
+  contains('diagnose-flaky repeats in one process', diagnosis.text, 'one Playwright process with `--repeat-each=3`');
+  contains('diagnose-flaky table shows 2 passes + 1 failure per test', diagnosis.text, '| `tests/flaky.spec.ts:17` inventory sync retries until the marker exists [chromium] | 2 | 1 |');
+
+  // A test that fails only when copies of it run at the same time: the
+  // isolate pass must call it a parallelism bug, not plain flakiness.
+  writeFileSync(
+    path.join(fixtureRoot, 'tests', 'slot.spec.ts'),
+    [
+      "import fs from 'node:fs';",
+      "import path from 'node:path';",
+      "import { expect, test } from '@playwright/test';",
+      '',
+      "test('shared slot is free', async () => {",
+      "  const lock = path.join(__dirname, '.slot-lock');",
+      '  let fd: number | undefined;',
+      "  try { fd = fs.openSync(lock, 'wx'); } catch { /* another copy holds it */ }",
+      "  expect(fd, 'slot already taken by a parallel run').toBeDefined();",
+      '  await new Promise((resolve) => setTimeout(resolve, 1500));',
+      '  fs.closeSync(fd!);',
+      '  fs.rmSync(lock, { force: true });',
+      '});',
+      '',
+    ].join('\n'),
+  );
+  const isolated = await callTool(client, 'diagnose-flaky', { testFiles: ['tests/slot.spec.ts'], runs: 3, isolate: true, workers: 3 }, 360_000);
+  contains('isolate runs the parallel pass fully parallel', isolated.text, '`--workers=3`, `--fully-parallel`');
+  contains('isolate compares parallel with alone', isolated.text, '### Parallel vs alone');
+  contains('isolate reads the shared slot as a parallelism bug', isolated.text, '🔀 **fails only in parallel**');
+  contains('isolate shows every run alone passing', isolated.text, '3/3 passed');
+  rmSync(path.join(fixtureRoot, 'tests', 'slot.spec.ts'), { force: true });
+  rmSync(path.join(fixtureRoot, 'tests', '.slot-lock'), { force: true });
 
   const generatedPath = path.join(fixtureRoot, 'tests', 'generated', 'click-the-call-to-action-button.spec.ts');
   const generate = await callTool(client, 'generate-e2e-test', { description: 'click the call to action button', pageUrl: origin }, 120_000);
@@ -592,6 +621,52 @@ async function phaseErrorPaths(client) {
   check('unknown tool call is rejected', unknownOk, unknownDetail);
 }
 
+async function phaseProfilesAndCi(origin) {
+  const env = {
+    ...process.env,
+    PW_MCP_PROJECT_ROOT: fixtureRoot,
+    FIXTURE_PORT: new URL(origin).port,
+    LOG_LEVEL: 'warn',
+    FORCE_COLOR: '0',
+  };
+
+  // A tool profile trims tools/list (and the context every request carries).
+  const profiled = new McpClient(
+    spawn(process.execPath, [serverEntry, '--tools=core,inspect-page'], { cwd: repoRoot, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
+  );
+  try {
+    await profiled.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e-profile', version: '1.0.0' } }, 30_000);
+    profiled.notify('notifications/initialized');
+    const list = await profiled.request('tools/list', {}, 30_000);
+    const names = (list.tools ?? []).map((tool) => tool.name).sort();
+    const expected = ['diagnose-flaky', 'get-failure', 'get-run-status', 'inspect-page', 'list-tests', 'run-test', 'suggest-fix'];
+    check('--tools=core,inspect-page exposes exactly that set', JSON.stringify(names) === JSON.stringify(expected), `got ${JSON.stringify(names)}`);
+  } finally {
+    await profiled.stop();
+  }
+
+  // The ci command: same diagnosis, as a CI step with a Markdown report.
+  const reportPath = path.join(fixtureRoot, 'test-results', 'ci-report.md');
+  const summaryPath = path.join(fixtureRoot, 'test-results', 'step-summary.md');
+  mkdirSync(path.dirname(reportPath), { recursive: true });
+  const ci = await new Promise((resolve) => {
+    const proc = spawn(
+      process.execPath,
+      [serverEntry, 'ci', '--output', reportPath, '--flaky-runs', '2', '--suggest', '1', 'tests/pass.spec.ts', 'tests/fail.spec.ts'],
+      { cwd: fixtureRoot, env: { ...env, GITHUB_STEP_SUMMARY: summaryPath }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+    );
+    let stdout = '';
+    proc.stdout.on('data', (chunk) => (stdout += chunk));
+    proc.on('close', (code) => resolve({ code, stdout }));
+  });
+  check('ci exits 1 when tests fail', ci.code === 1, `exit ${ci.code}`);
+  contains('ci report names the failing test', ci.stdout, 'tests/fail.spec.ts:9');
+  contains('ci report carries the flaky verdict', ci.stdout, '### Flaky diagnosis');
+  contains('ci report carries the suggest-fix section', ci.stdout, 'Fix for failure 1');
+  check('ci writes the --output report', existsSync(reportPath) && readFileSync(reportPath, 'utf8') === ci.stdout, reportPath);
+  check('ci appends to the GitHub job summary', existsSync(summaryPath) && readFileSync(summaryPath, 'utf8').includes('## Playwright run'), summaryPath);
+}
+
 /* ------------------------------------------------------------------ */
 /* Main                                                                */
 /* ------------------------------------------------------------------ */
@@ -632,6 +707,7 @@ async function main() {
     await phaseTestRuns(client, fixture.origin);
     await phaseHistoryAndHeal(client);
     await phaseErrorPaths(client);
+    await phaseProfilesAndCi(fixture.origin);
   } catch (error) {
     fatal = error;
     check(`harness aborted: ${error?.message ?? error}`, false, error?.stack);
