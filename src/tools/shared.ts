@@ -464,7 +464,7 @@ export function loginHint(finalUrl: string | undefined, state: ResolvedPageState
 /* ------------------------------------------------------------------ */
 
 export interface BrowserScriptConfig extends Omit<ResolvedPageState, never> {
-  mode: 'inspect' | 'validate' | 'screenshot' | 'heal';
+  mode: 'inspect' | 'validate' | 'screenshot' | 'heal' | 'a11y';
   projectRoot: string;
   /** Page to open; omitted when rendering a snapshot. */
   url?: string;
@@ -490,6 +490,10 @@ export interface BrowserScriptConfig extends Omit<ResolvedPageState, never> {
   screenshotPath?: string;
   /** Capture the full scrollable page (mode: 'screenshot'). */
   fullPage?: boolean;
+  /** a11y: path of axe.min.js, the axe tags to run, and nodes kept per rule. */
+  axeSourcePath?: string;
+  axeTags?: string[];
+  maxNodes?: number;
   startedAt: number;
 }
 
@@ -508,6 +512,32 @@ export interface BrowserScriptData {
   /** Page actions that completed before inspection. */
   actionsDone?: string[];
   durationMs?: number;
+  /** mode 'a11y': axe-core violations; node.element indexes `elements`. */
+  a11y?: AccessibilityScan;
+}
+
+export interface AccessibilityNode {
+  target: string;
+  html: string;
+  summary: string;
+  element: number;
+}
+
+export interface AccessibilityViolation {
+  id: string;
+  impact: 'critical' | 'serious' | 'moderate' | 'minor';
+  help: string;
+  helpUrl: string;
+  tags: string[];
+  nodeCount: number;
+  nodes: AccessibilityNode[];
+}
+
+export interface AccessibilityScan {
+  violations: AccessibilityViolation[];
+  passes: number;
+  incomplete: number;
+  scopeMissing?: boolean;
 }
 
 /** Best verified locator for an element, as source text. */

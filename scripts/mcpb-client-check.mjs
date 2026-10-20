@@ -31,6 +31,7 @@ const fixtureRoot = path.join(root, 'e2e', 'fixture');
 /** Tools and prompts the published bundle must advertise. */
 const EXPECTED_TOOLS = [
   'analyze-history',
+  'audit-accessibility',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',

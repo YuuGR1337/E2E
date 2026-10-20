@@ -24,6 +24,9 @@ Runs Playwright and returns stats, failures, failure kinds and fix hints.
 
 Traces are captured on failure automatically so `get-failure` can show the DOM.
 Clients that send a progress token get live progress while the run goes.
+Failures that share a kind and first error line are grouped (0.4.0+): each
+cause is shown once in full, the other tests under it as one line each, and
+their `index` numbers stay the ones `get-failure` takes.
 
 ## get-failure
 
@@ -113,6 +116,7 @@ Baselines live in `.pw-mcp/visual/`.
 | `testFiles` | string[] | Default: tests that failed in the last run |
 | `runs` | number | 2 to 10 (default 3) |
 | `isolate` | boolean | Repeat fully parallel (`workers` default 4), then repeat the failing tests with one worker (0.3.0+) |
+| `order` | boolean | Run the target files in `runs` random orders with one worker (`--shuffle`, Playwright 1.64+), replay a failing order, and name the test it relies on or is broken by (0.4.0+) |
 | `separateProcesses` | boolean | One Playwright process per run instead of one `--repeat-each` process; slower (0.3.0+) |
 | `browser`, `headed`, `workers`, `config` | | As `run-test` |
 | `timeoutMs` | number | Per run (default 120000); the single `--repeat-each` process gets this × `runs` |
@@ -121,8 +125,29 @@ Runs with retries disabled and returns, per test, passes, failures, duration
 spread, first error and `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING`,
 plus the verdict block for the worst test. With `isolate`, a second table reads
 each failing test as "fails only in parallel", "flaky even alone" or "fails
-alone too". Versions before 0.3.0 return one run-level verdict and a per-run
+alone too". With `order`, a third section reads each test as "order
+dependent", "flaky regardless of order" or "fails in every order", with the
+`--shuffle=<seed>` command that reproduces it. `PW_MCP_SHUFFLE_SEEDS=1,2,3`
+on the server replays given seeds instead of random ones. Versions before 0.3.0 return one run-level verdict and a per-run
 table instead.
+
+## audit-accessibility
+
+Runs axe-core (0.4.0+) on a live page and returns WCAG violations, worst first.
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `url` | string | Required |
+| `standard` | `wcag2a` \| `wcag2aa` \| `wcag21aa` \| `wcag22aa` \| `best-practice` \| `all` | Default `wcag22aa` (WCAG 2.0 to 2.2, A and AA) |
+| `minImpact` | `critical` \| `serious` \| `moderate` \| `minor` | Hide violations below this impact |
+| `selector` | string | Audit only this part of the page |
+| `storageState`, `headers`, `actions`, `viewport` | | As `inspect-page` |
+| `waitFor`, `waitUntil`, `timeoutMs` | | `waitUntil` default `load`; `timeoutMs` default 60000 |
+
+Each violation has its rule id, impact, WCAG criteria, a help link, up to three
+offending elements as verified locators with what to change, and the count of
+the rest. The result ends with an `@axe-core/playwright` check to paste into
+the spec.
 
 ## suggest-fix
 

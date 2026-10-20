@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 import { PlaywrightMcpError } from '../types/index.js';
-import type { RunTestOptions, RunTestResult, ToolContext, ToolResponse } from '../types/index.js';
+import type { RunTestOptions, RunTestResult, TestFailure, ToolContext, ToolResponse } from '../types/index.js';
 import { detectProject, missingPlaywrightMessage } from '../utils/project-detector.js';
 import { runTests } from '../utils/playwright-runner.js';
 import { normalizePath, relativeToRoot } from '../utils/path-utils.js';
@@ -16,6 +16,7 @@ import {
   clipLines,
   formatDuration,
   guard,
+  markdownCell,
   renderFailure,
   resolveConfigSelection,
   resolveProjectRoot,
@@ -83,6 +84,64 @@ const runTestInput = z.object({
 export type RunTestInput = z.infer<typeof runTestInput>;
 export const runTestSchema = runTestInput;
 
+export interface FailureCluster {
+  kind: string;
+  /** First line of the shared error, as shown. */
+  headline: string;
+  /** Indexes into result.failures (0-based), first one is the representative. */
+  indexes: number[];
+}
+
+/** First error line with digits folded; ANSI codes and stray whitespace removed. */
+function clusterKey(failure: TestFailure): string {
+  const first = (failure.message ?? '').replace(/\u001b\[[0-9;]*m/g, '').split('\n').find((l) => l.trim() !== '') ?? '';
+  return `${failure.failureKind}|${first.toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 200)}`;
+}
+
+/**
+ * Group failures that share one cause (same kind and same first error line,
+ * numbers aside): a dead server or one drifted shared component fails many
+ * tests the same way, and is fixed once.
+ */
+export function clusterFailures(failures: TestFailure[]): FailureCluster[] {
+  const byKey = new Map<string, FailureCluster>();
+  failures.forEach((failure, i) => {
+    const key = clusterKey(failure);
+    const cluster = byKey.get(key);
+    if (cluster) cluster.indexes.push(i);
+    else {
+      const headline = (failure.message ?? '').replace(/\u001b\[[0-9;]*m/g, '').split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
+      byKey.set(key, { kind: failure.failureKind, headline, indexes: [i] });
+    }
+  });
+  return [...byKey.values()];
+}
+
+function renderFailures(failures: TestFailure[]): string[] {
+  const clusters = clusterFailures(failures);
+  const shared = clusters.filter((c) => c.indexes.length > 1);
+  if (shared.length === 0) {
+    return failures.flatMap((failure, i) => [renderFailure(failure, i, failures.length), '']);
+  }
+  const lines = [
+    `**${clusters.length} distinct cause${clusters.length === 1 ? '' : 's'}** for ${failures.length} failures; tests that fail the same way are shown once, under the first of them. Fix the cause, then re-run with \`lastFailed: true\`.`,
+    '',
+  ];
+  for (const cluster of clusters) {
+    const [first, ...rest] = cluster.indexes;
+    if (rest.length > 0) lines.push(`#### Same cause in ${cluster.indexes.length} tests: ${markdownCell(clipLines(cluster.headline, 1, 140))}`, '');
+    lines.push(renderFailure(failures[first], first, failures.length), '');
+    if (rest.length > 0) {
+      for (const i of rest) {
+        const f = failures[i];
+        lines.push(`- ${i + 1} of ${failures.length}. ${f.title} · \`${f.file}${f.line ? `:${f.line}` : ''}\``);
+      }
+      lines.push('');
+    }
+  }
+  return lines;
+}
+
 export function renderRunResult(result: RunTestResult, root: string): string {
   const flakyCount = result.stats?.flaky ?? 0;
   const status = result.ok
@@ -128,9 +187,7 @@ export function renderRunResult(result: RunTestResult, root: string): string {
   if (result.failures.length > 0) {
     const more = result.failuresTruncated ? ' (showing the first ones)' : '';
     lines.push(`### ❌ ${result.failures.length} failing test(s)${more}`, '');
-    for (let i = 0; i < result.failures.length; i += 1) {
-      lines.push(renderFailure(result.failures[i], i, result.failures.length), '');
-    }
+    lines.push(...renderFailures(result.failures));
     lines.push(
       '> Next: call **get-failure** with `index` to get the full stack, code frame and a suggested fix for one failure.',
       '',

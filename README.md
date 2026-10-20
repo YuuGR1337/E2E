@@ -21,8 +21,9 @@ run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ 
 What it does that a browser-driving MCP or a raw `npx playwright test` does not:
 
 - **Structured runs.** Stats plus each failure's `file:line`, kind (assertion, timeout,
-  dead dev server, syntax error, crash, full disk…) and a concrete fix hint. Long suites run
-  in the background with live progress.
+  dead dev server, syntax error, crash, full disk…) and a concrete fix hint. Failures that
+  share one cause are grouped, so 30 tests broken by one dead server read as one problem.
+  Long suites run in the background with live progress.
 - **Diagnosis from the trace.** The DOM at the moment of failure, the failed action, the
   4xx/5xx requests and console errors, read from Playwright's own trace.
 - **Fixes that are proven, not guessed.** `suggest-fix` matches a broken locator against the
@@ -32,13 +33,21 @@ What it does that a browser-driving MCP or a raw `npx playwright test` does not:
   missing and does not patch the test to hide a real bug.
 - **Flakiness with evidence.** `diagnose-flaky` repeats failing tests in one process and
   gives a verdict per test; with `isolate: true` it re-runs them alone to tell a shared-state
-  bug that only bites in parallel from a race inside the test. Every run is recorded locally;
+  bug that only bites in parallel from a race inside the test, and with `order: true` it runs
+  the files in random orders to catch a test that only passes when another one ran first,
+  naming that test and the seed that reproduces it. Every run is recorded locally;
   `analyze-history` separates tests that flip (flaky) from ones that started failing
   (regressed) or always fail (broken), and groups failures that share one cause.
 - **In CI too.** A [GitHub Action and `ci` command](#ci-github-action-and-ci-command) post the
   same diagnosis, flaky verdict and fix diffs to the job summary and the PR.
+- **Accessibility.** `audit-accessibility` runs axe-core against WCAG 2.2 AA on any page,
+  signed in or after steps, and returns each violation with the offending elements as verified
+  locators and a regression check to paste into the spec.
 - **Pages behind a login.** Every page tool accepts a Playwright `storageState`, extra
   headers, and click/fill steps to reach a modal or a later step.
+- **An agent skill that teaches the craft.** The bundled skill drives the tools and carries a
+  guide to writing tests that stay green (locators, waiting, auth, data isolation, mocking,
+  flake patterns, review checklist).
 - **Small on the wire.** In the [benchmark](bench/RESULTS.md), diagnosing and fixing one
   drifted locator cost about 5,300 tokens here against about 7,400 with Playwright MCP plus a
   shell, and the fix was applied and verified without the agent editing anything.
@@ -95,7 +104,7 @@ npx -y playwright-e2e-mcp init            # --client all | cursor,vscode … · 
 | **Skill only, any agent** | `npx skills add xsignon-secure/E2E` |
 | **npm (canonical, fastest)** | `npx -y playwright-e2e-mcp` |
 | **MCP Registry** (registry-aware clients discover it automatically) | `io.github.xsignon-secure/E2E` — [listing](https://registry.modelcontextprotocol.io/) |
-| **Any client, no npm account needed** | `npx -y github:xsignon-secure/E2E#v0.3.2` (pin a release tag) |
+| **Any client, no npm account needed** | `npx -y github:xsignon-secure/E2E#v0.4.0` (pin a release tag) |
 | **Claude Desktop, zero Node setup** | double-click the [`.mcpb` extension](https://github.com/xsignon-secure/E2E/releases) |
 | **Remote-only clients (ChatGPT connectors)** | `https://playwright-e2e-mcp.vercel.app/api/mcp` |
 
@@ -127,7 +136,8 @@ Details and per-client config: [Installation](#installation) ·
 | `validate-selector` | Check a CSS selector, Playwright selector or **locator expression** against a live page: validity, match count, and a sturdier verified locator for each match |
 | `generate-e2e-test` | Scaffold a Playwright test from a description using the project's **real** selectors and verified locators from the live page |
 | `compare-visual-state` | Visual regression: screenshot before/after a change and report *what* moved and how colors shifted |
-| `diagnose-flaky` | Run a failing test 2–10 times **with retries disabled** and return an evidence verdict: `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING` |
+| `audit-accessibility` | Run axe-core (WCAG 2.2 AA by default) on a page, signed in or after steps, and return violations worst first with **verified locators** for the offending elements and a regression check |
+| `diagnose-flaky` | Run a failing test 2–10 times **with retries disabled** and return an evidence verdict: `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING`; tells parallelism and **test-order** bugs from races |
 | `analyze-history` | Rank flaky, regressed and broken tests from the local run history, group failures by cause, or show one test's timeline |
 
 Two **prompts** package the main workflows for clients that show them as slash commands:
@@ -316,6 +326,7 @@ and write a red-highlighted diff image for review.
 | `testFiles` | string[] | Tests to diagnose (`file:line` supported). Defaults to the tests that failed in the most recent run |
 | `runs` | number | Repetitions, `2–10` (default `3`) |
 | `isolate` | boolean | Also tell parallelism bugs from flakiness: repeat fully parallel (`workers` default `4`), then repeat the failing tests with one worker |
+| `order` | boolean | Also run the target files in `runs` random orders with one worker (Playwright 1.64+ `--shuffle`), replay a failing order, and name the test it relies on or is broken by |
 | `separateProcesses` | boolean | Start a fresh Playwright process per repetition instead of one `--repeat-each` process (slower; for flakes that depend on global setup or a cold start) |
 | `browser` / `headed` / `workers` / `config` | — | As with `run-test` |
 | `timeoutMs` | number | Hard wall-clock limit **per repetition** (default `120000`); one `--repeat-each` process gets this × `runs` |
@@ -346,8 +357,54 @@ and **alone**:
 | ⏱️ flaky even alone | The race is inside the test or the app: missing `await`, asserting before the UI settles |
 | ❌ fails alone too | Not a parallelism problem; a real bug |
 
+With `order: true` a third section runs the spec files (not just the failing
+lines) in random orders with one worker and `--fully-parallel`, so every test is
+scheduled on its own. A test that fails in some orders is replayed in a failing
+order; if it fails again it is read as **🔗 order dependent**, otherwise as
+**flaky regardless of order**:
+
+```
+| `tests/cart.spec.ts:10` checkout lists the book | 2/3 | `4` | 🔗 order dependent … |
+
+**checkout lists the book**
+- Relies on: `adds a book to the cart` (ran before it in every passing order, after it in a failing one)
+- Reproduce: `npx playwright test tests/cart.spec.ts --workers=1 --fully-parallel --retries=0 --shuffle=4`
+```
+
+This is the failure that otherwise reads as "passes alone, fails in the suite".
+Set `PW_MCP_SHUFFLE_SEEDS=4,7` on the server to replay given orders, for
+example to check a fix.
+
 Each repetition is recorded in the run history, and the last failing run is
 stored, so `analyze-history` and `get-failure` work right afterwards.
+
+### `audit-accessibility`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `url` | string | Page to audit (required) |
+| `standard` | `wcag2a` \| `wcag2aa` \| `wcag21aa` \| `wcag22aa` \| `best-practice` \| `all` | Rule set (default `wcag22aa`: WCAG 2.0–2.2 level A and AA; `best-practice` adds axe's extra rules; `all` runs every rule) |
+| `minImpact` | `critical` \| `serious` \| `moderate` \| `minor` | Hide violations below this impact |
+| `selector` | string | Audit only this part of the page |
+| `waitFor` / `waitUntil` / `timeoutMs` | — | As with `inspect-page` (`waitUntil` default `load`, `timeoutMs` default `60000`) |
+| `storageState` / `headers` / `actions` / `viewport` | — | [Page state](#page-state-signed-in-pages-headers-and-steps) |
+
+axe-core (the engine behind Lighthouse's accessibility score) is bundled and
+evaluated inside the page, so a Content-Security-Policy does not block it.
+Example output:
+
+```
+## ♿ 3 accessibility violations (2 critical, 1 serious)
+
+### 1. critical · `button-name`: Buttons must have discernible text (WCAG 4.1.2)
+1 element · https://dequeuniversity.com/rules/axe/4.14/button-name
+- `getByTestId('go')`: Element does not have inner text that is visible to screen readers
+
+### 3. serious · `color-contrast`: Elements must meet minimum color contrast ratio thresholds (WCAG 1.4.3)
+- `getByText('Low contrast')`: Element has insufficient color contrast of 2.32 (foreground color: #aaaaaa, …). Expected contrast ratio of 4.5:1
+```
+
+It ends with an `@axe-core/playwright` check for the spec, so the page stays fixed.
 
 ### `suggest-fix`
 
@@ -418,8 +475,8 @@ builds `dist/` automatically on install). Pin a release tag: an unpinned
 `github:xsignon-secure/E2E` runs whatever is on the default branch at that moment.
 
 ```bash
-npx -y github:xsignon-secure/E2E#v0.3.2
-npm install -D github:xsignon-secure/E2E#v0.3.2 @playwright/test   # or as a project dependency
+npx -y github:xsignon-secure/E2E#v0.4.0
+npm install -D github:xsignon-secure/E2E#v0.4.0 @playwright/test   # or as a project dependency
 npx playwright install chromium
 ```
 
@@ -427,7 +484,7 @@ Or grab the packaged tarball from the repo's **GitHub Releases** page and instal
 it locally:
 
 ```bash
-npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.3.2/playwright-e2e-mcp-0.3.2.tgz
+npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.4.0/playwright-e2e-mcp-0.4.0.tgz
 ```
 
 Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io/)** as
@@ -443,7 +500,7 @@ Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io
   "mcpServers": {
     "playwright-e2e": {
       "command": "npx",
-      "args": ["-y", "github:xsignon-secure/E2E#v0.3.2"],
+      "args": ["-y", "github:xsignon-secure/E2E#v0.4.0"],
       "env": { "PW_MCP_PROJECT_ROOT": "/absolute/path/to/your/project" }
     }
   }
@@ -457,8 +514,8 @@ when the client launches it somewhere else (e.g. your home directory).
 **Codex / VS Code / Copilot CLIs:**
 
 ```bash
-codex mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.2
-code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:xsignon-secure/E2E#v0.3.2"]}'
+codex mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.4.0
+code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:xsignon-secure/E2E#v0.4.0"]}'
 ```
 
 Codex's defaults fight this server: the first launch clones the repo and runs
@@ -469,7 +526,7 @@ Codex's defaults fight this server: the first launch clones the repo and runs
 ```toml
 [mcp_servers.playwright-e2e]
 command = "npx"
-args = ["-y", "github:xsignon-secure/E2E#v0.3.2"]
+args = ["-y", "github:xsignon-secure/E2E#v0.4.0"]
 startup_timeout_sec = 60
 tool_timeout_sec = 600
 ```
@@ -484,7 +541,7 @@ into `PW_MCP_PROJECT_ROOT`, so the tools point at a real project from the first 
 **Claude Code:**
 
 ```bash
-claude mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.2
+claude mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.4.0
 ```
 
 **Gemini CLI / Qwen Code:** paste the `mcpServers` block above into
@@ -619,7 +676,7 @@ steps:
   - uses: actions/setup-node@v6
     with: { node-version: 24 }
   - run: npm ci && npx playwright install --with-deps chromium
-  - uses: xsignon-secure/E2E@v0.3.2
+  - uses: xsignon-secure/E2E@v0.4.0
     with:
       flaky-runs: 3      # 0 skips the flaky verdict
       suggest: 2         # suggest-fix diffs for the first 2 failures
@@ -646,8 +703,9 @@ browsers match Playwright 1.63. Mount your project at `/work`; its own
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
-| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, flaky, history, list), `inspect` (page, selector, visual), `author` (list, page, selector, generate, run). All eleven tool definitions cost about 5.2k tokens of context per request; `core` costs about 2.4k |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, flaky, history, list), `inspect` (page, selector, accessibility, visual), `author` (list, page, selector, generate, run). All twelve tool definitions cost about 5.5k tokens of context per request; `core` costs about 2.2k |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
+| `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |
 | `PW_MCP_ALLOWED_ROOTS` | — | Extra directories a caller may pass as `projectRoot` (`:`-separated, `;` on Windows). Anything outside these and the default root is rejected |
 | `PW_MCP_HTTP_TOKEN` | — | HTTP bridge only: bearer token (16+ characters) that unlocks all tools (see above) |
@@ -763,7 +821,7 @@ picks the right locator from the snapshot on the first try, which the server doe
 src/
 ├── index.ts            # bin entry point (--version/--help, main-module guard)
 ├── server.ts           # McpServer setup, tool registration, shutdown handling
-├── tools/              # the eleven tools, the probe script + shared plumbing
+├── tools/              # the twelve tools, the probe script + shared plumbing
 ├── prompts.ts          # fix-failing-test, triage-flaky-tests
 ├── utils/              # playwright-runner, report-parser, project-detector, path-utils,
 │                       # logger, trace-reader (trace.zip → DOM/network/console),
@@ -812,7 +870,7 @@ server over stdio against a live fixture app and a Playwright project under
 `e2e/fixture/`, then drives it exactly like an MCP client and asserts ~40 behaviours
 that only appear end-to-end:
 
-- initialize handshake, 11 tools, 2 prompts, spec tool annotations and object input schemas,
+- initialize handshake, 12 tools, 2 prompts, spec tool annotations and object input schemas,
 - verified locators, locator validation, signed-in pages (`storageState`) and page steps,
 - background runs with progress, run history views, and `suggest-fix` healing a drifted
   locator and verifying it with a re-run (and refusing when the element is missing),
@@ -916,8 +974,8 @@ job requests for itself; if it is refused, the run names the setting to change.
 ### Verifying a published release
 
 ```bash
-git checkout v0.3.2 && npm ci && npm run mcpb
-npm run release:verify -- v0.3.2
+git checkout v0.4.0 && npm ci && npm run mcpb
+npm run release:verify -- v0.4.0
 ```
 
 The release notes promise that the tag rebuilds the published bundle byte for

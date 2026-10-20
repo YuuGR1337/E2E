@@ -193,7 +193,7 @@ test('the CLI builds, and fails with the file names when copies disagree', (t) =
   const built = runCli(['build', '--out', out]);
   assert.equal(built.status, 0, built.stderr);
   assert.deepEqual(readFileSync(out), buildSkillZip(), 'the CLI writes exactly the deterministic build');
-  assert.match(built.stdout, /wrote .*playwright-e2e-mcp\.zip \(5 files, [\d.]+ KB\)/);
+  assert.match(built.stdout, /wrote .*playwright-e2e-mcp\.zip \(6 files, [\d.]+ KB\)/);
   assert.match(built.stdout, /contents {2}playwright-e2e-mcp\/ \(SKILL\.md, /);
 
   const pass = runCli(['check', good]);
