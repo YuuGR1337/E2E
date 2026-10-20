@@ -1,0 +1,21 @@
+# playwright-e2e-mcp
+
+> MCP server that runs, diagnoses and fixes failing Playwright end-to-end tests: structured failures (file:line + kind), trace-based diagnosis (DOM, network, console at the failure), verified locator fixes that re-run and revert if still red, per-test flaky verdicts, run history, and a GitHub Action. Ships with an agent skill (SKILL.md). MIT, Node 20+, no API keys.
+
+Install in one command from a project root: `npx -y playwright-e2e-mcp init` (merges the server into Claude Code, Cursor, VS Code, Gemini CLI and Codex project configs and installs the skill).
+
+## Install
+
+- [Install guide for AI agents](https://raw.githubusercontent.com/xsignon-secure/E2E/main/llms-install.md): step-by-step, every client
+- [npm package](https://www.npmjs.com/package/playwright-e2e-mcp): `npx -y playwright-e2e-mcp`
+- [MCP Registry entry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.xsignon-secure/E2E): `io.github.xsignon-secure/E2E`
+- [Claude Code plugin](https://github.com/xsignon-secure/E2E/blob/main/.claude-plugin/marketplace.json): `/plugin marketplace add xsignon-secure/E2E`, then `/plugin install playwright-e2e-mcp@xsignon-secure`
+- [Gemini CLI extension](https://github.com/xsignon-secure/E2E/blob/main/gemini-extension.json): `gemini extensions install https://github.com/xsignon-secure/E2E`
+- [Agent skill](https://github.com/xsignon-secure/E2E/tree/main/skill/playwright-e2e-mcp): `npx skills add xsignon-secure/E2E`
+
+## Docs
+
+- [README](https://github.com/xsignon-secure/E2E#readme): tools, configuration, CI Action
+- [Skill workflow](https://raw.githubusercontent.com/xsignon-secure/E2E/main/skill/playwright-e2e-mcp/SKILL.md): when and how an agent should use each tool
+- [Tool reference](https://raw.githubusercontent.com/xsignon-secure/E2E/main/skill/playwright-e2e-mcp/references/tools.md): every tool's arguments
+- [Failure kinds](https://raw.githubusercontent.com/xsignon-secure/E2E/main/skill/playwright-e2e-mcp/references/failure-kinds.md): error codes and what to do

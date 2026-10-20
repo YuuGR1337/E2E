@@ -1,0 +1,14 @@
+{
+  "name": "xsignon-secure",
+  "description": "Plugins from xsignon-secure: Playwright test diagnosis and repair for Claude Code.",
+  "owner": { "name": "xsignon-secure", "url": "https://github.com/xsignon-secure" },
+  "plugins": [
+    {
+      "name": "playwright-e2e-mcp",
+      "source": "./",
+      "description": "Diagnose and fix failing Playwright tests: MCP server + agent skill.",
+      "category": "testing",
+      "tags": ["playwright", "e2e", "testing", "mcp"]
+    }
+  ]
+}

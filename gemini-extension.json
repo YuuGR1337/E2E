@@ -1,0 +1,12 @@
+{
+  "name": "playwright-e2e-mcp",
+  "version": "0.3.1",
+  "description": "Diagnose and fix failing Playwright tests: trace analysis, verified locator fixes, per-test flaky verdicts.",
+  "mcpServers": {
+    "playwright-e2e": {
+      "command": "npx",
+      "args": ["-y", "playwright-e2e-mcp"]
+    }
+  },
+  "contextFileName": "skill/playwright-e2e-mcp/SKILL.md"
+}

@@ -73,11 +73,29 @@ captured output; the endpoint card is an illustration of the authenticated listi
 Works with Claude Desktop, Claude Code, Cursor, Windsurf, Codex, Gemini CLI, Freebuff
 and every other MCP client — pick whichever route fits:
 
+**Let your agent do it.** Paste this into Claude Code, Cursor, Codex, Gemini CLI or any
+other coding agent:
+
+> Install the playwright-e2e-mcp server and skill by following
+> https://raw.githubusercontent.com/xsignon-secure/E2E/main/llms-install.md
+
+or run the installer yourself from the project root. It merges the server into each
+client's project config it finds (Claude Code, Cursor, VS Code, Gemini CLI, Codex) and
+installs the agent skill, leaving your other servers alone:
+
+```bash
+npx -y playwright-e2e-mcp init            # --client all | cursor,vscode … · --dry-run
+```
+
 | Route | How |
 | --- | --- |
+| **One command, any project** | `npx -y playwright-e2e-mcp init` |
+| **Claude Code plugin (server + skill)** | `/plugin marketplace add xsignon-secure/E2E` then `/plugin install playwright-e2e-mcp@xsignon-secure` |
+| **Gemini CLI extension (server + skill)** | `gemini extensions install https://github.com/xsignon-secure/E2E` |
+| **Skill only, any agent** | `npx skills add xsignon-secure/E2E` |
 | **npm (canonical, fastest)** | `npx -y playwright-e2e-mcp` |
 | **MCP Registry** (registry-aware clients discover it automatically) | `io.github.xsignon-secure/E2E` — [listing](https://registry.modelcontextprotocol.io/) |
-| **Any client, no npm account needed** | `npx -y github:xsignon-secure/E2E#v0.3.0` (pin a release tag) |
+| **Any client, no npm account needed** | `npx -y github:xsignon-secure/E2E#v0.3.1` (pin a release tag) |
 | **Claude Desktop, zero Node setup** | double-click the [`.mcpb` extension](https://github.com/xsignon-secure/E2E/releases) |
 | **Remote-only clients (ChatGPT connectors)** | `https://playwright-e2e-mcp.vercel.app/api/mcp` |
 
@@ -400,8 +418,8 @@ builds `dist/` automatically on install). Pin a release tag: an unpinned
 `github:xsignon-secure/E2E` runs whatever is on the default branch at that moment.
 
 ```bash
-npx -y github:xsignon-secure/E2E#v0.3.0
-npm install -D github:xsignon-secure/E2E#v0.3.0 @playwright/test   # or as a project dependency
+npx -y github:xsignon-secure/E2E#v0.3.1
+npm install -D github:xsignon-secure/E2E#v0.3.1 @playwright/test   # or as a project dependency
 npx playwright install chromium
 ```
 
@@ -409,7 +427,7 @@ Or grab the packaged tarball from the repo's **GitHub Releases** page and instal
 it locally:
 
 ```bash
-npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.3.0/playwright-e2e-mcp-0.3.0.tgz
+npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.3.1/playwright-e2e-mcp-0.3.1.tgz
 ```
 
 Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io/)** as
@@ -425,7 +443,7 @@ Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io
   "mcpServers": {
     "playwright-e2e": {
       "command": "npx",
-      "args": ["-y", "github:xsignon-secure/E2E#v0.3.0"],
+      "args": ["-y", "github:xsignon-secure/E2E#v0.3.1"],
       "env": { "PW_MCP_PROJECT_ROOT": "/absolute/path/to/your/project" }
     }
   }
@@ -439,8 +457,8 @@ when the client launches it somewhere else (e.g. your home directory).
 **Codex / VS Code / Copilot CLIs:**
 
 ```bash
-codex mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.0
-code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:xsignon-secure/E2E#v0.3.0"]}'
+codex mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.1
+code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:xsignon-secure/E2E#v0.3.1"]}'
 ```
 
 Codex's defaults fight this server: the first launch clones the repo and runs
@@ -451,7 +469,7 @@ Codex's defaults fight this server: the first launch clones the repo and runs
 ```toml
 [mcp_servers.playwright-e2e]
 command = "npx"
-args = ["-y", "github:xsignon-secure/E2E#v0.3.0"]
+args = ["-y", "github:xsignon-secure/E2E#v0.3.1"]
 startup_timeout_sec = 60
 tool_timeout_sec = 600
 ```
@@ -466,7 +484,7 @@ into `PW_MCP_PROJECT_ROOT`, so the tools point at a real project from the first 
 **Claude Code:**
 
 ```bash
-claude mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.0
+claude mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.1
 ```
 
 **Gemini CLI / Qwen Code:** paste the `mcpServers` block above into
@@ -601,7 +619,7 @@ steps:
   - uses: actions/setup-node@v6
     with: { node-version: 24 }
   - run: npm ci && npx playwright install --with-deps chromium
-  - uses: xsignon-secure/E2E@v0.3.0
+  - uses: xsignon-secure/E2E@v0.3.1
     with:
       flaky-runs: 3      # 0 skips the flaky verdict
       suggest: 2         # suggest-fix diffs for the first 2 failures
@@ -898,8 +916,8 @@ job requests for itself; if it is refused, the run names the setting to change.
 ### Verifying a published release
 
 ```bash
-git checkout v0.3.0 && npm ci && npm run mcpb
-npm run release:verify -- v0.3.0
+git checkout v0.3.1 && npm ci && npm run mcpb
+npm run release:verify -- v0.3.1
 ```
 
 The release notes promise that the tag rebuilds the published bundle byte for

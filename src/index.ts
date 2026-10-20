@@ -32,6 +32,15 @@ async function main(): Promise<void> {
     process.exitCode = await runCi(process.argv.slice(3));
     return;
   }
+  if (process.argv[2] === 'init') {
+    const { runInit, INIT_USAGE } = await import('./cli/init.js');
+    if (process.argv.includes('--help') || process.argv.includes('-h')) {
+      process.stdout.write(INIT_USAGE);
+      return;
+    }
+    process.exitCode = runInit(process.argv.slice(3));
+    return;
+  }
   if (process.argv.includes('--version') || process.argv.includes('-v')) {
     process.stdout.write(`${SERVER_VERSION}\n`);
     return;
@@ -43,6 +52,7 @@ async function main(): Promise<void> {
         '',
         'Usage: playwright-e2e-mcp [--tools=<list>] [--version] [--help]',
         '       playwright-e2e-mcp ci [options]   run the suite and print a Markdown diagnosis (ci --help)',
+        '       playwright-e2e-mcp init [options] add the server + agent skill to a project (init --help)',
         '',
         'Connects over stdio (MCP). Configuration via environment:',
         '  PW_MCP_PROJECT_ROOT        default project root (default: cwd)',
