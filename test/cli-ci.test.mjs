@@ -38,7 +38,7 @@ test('resolveToolSelection expands profiles, keeps registry order and reports un
 
 test('action.yml fits GitHub Marketplace limits and defaults to the package version', async () => {
   const { readFileSync } = await import('node:fs');
-  const yml = readFileSync(new URL('../action.yml', import.meta.url), 'utf8');
+  const yml = readFileSync(new URL('../action.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const description = yml.match(/^description: (.*)$/m)?.[1] ?? '';
   assert.ok(description.length > 0 && description.length < 125, `description is ${description.length} chars`);
