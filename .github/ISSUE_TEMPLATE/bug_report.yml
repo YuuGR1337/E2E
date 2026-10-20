@@ -1,0 +1,44 @@
+name: Bug report
+description: A tool returned something wrong, crashed, or a fix was incorrect
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report. Please remove secrets, cookies and internal URLs from anything you paste. Security issues go to SECURITY.md instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `npx playwright-e2e-mcp --version`
+      placeholder: 0.3.1
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options: [Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex, Gemini CLI, GitHub Action / ci command, Other]
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool
+      placeholder: suggest-fix
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The arguments you passed, what the tool returned, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: A minimal Playwright test or repo that shows the problem, if you have one.
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: macOS 15, Node 22, @playwright/test 1.63

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/xsignon-secure/E2E/security/advisories/new
+    about: Report security issues privately, not as a public issue.
+  - name: Install guide
+    url: https://github.com/xsignon-secure/E2E/blob/main/llms-install.md
+    about: Setup for Claude Code, Cursor, VS Code, Gemini CLI, Codex and other clients.
