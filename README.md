@@ -3,6 +3,10 @@
 [![CI](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml/badge.svg)](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/xsignon-secure/E2E)](https://github.com/xsignon-secure/E2E/releases) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.xsignon--secure%2FE2E-2563eb)](https://registry.modelcontextprotocol.io/)
 [![M8ven Score](https://m8ven.ai/badge/mcp/trajectiq-ai/e2e)](https://m8ven.ai/mcp/trajectiq-ai/e2e?s=readme)
 
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=playwright-e2e&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInBsYXl3cmlnaHQtZTJlLW1jcCJdfQ==)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_server-0098FF?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522playwright-e2e%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522playwright-e2e-mcp%2522%255D%257D)
+[![Add to Claude Desktop](https://img.shields.io/badge/Claude_Desktop-.mcpb_bundle-D97757)](https://github.com/xsignon-secure/E2E/releases/latest)
+
 An [MCP](https://modelcontextprotocol.io) server that **diagnoses and fixes failing Playwright
 tests**. It is the layer that sits next to a browser-driving MCP: Playwright MCP gives an agent
 hands in the browser; this server gives it a test runner, a failure analyst and a verified fixer.
@@ -61,6 +65,8 @@ against the bundled `examples/sample-test.spec.ts` (actual output, unedited):
 
 Images are rendered with `node scripts/gen-demo-images.mjs`: the run-test card is real
 captured output; the endpoint card is an illustration of the authenticated listing.
+
+> If this saves you a debugging session, a ⭐ on the repo helps other Playwright users find it.
 
 ## Install
 
