@@ -4,7 +4,7 @@ import { deflateRawSync, gzipSync } from 'node:zlib';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { readZipEntries, analyzeTraceEvents, readFailureTrace, parseNetworkLog } from '../dist/utils/trace-reader.js';
+import { readZipEntries, analyzeTraceEvents, readFailureTrace, parseNetworkLog, serializeDomTree } from '../dist/utils/trace-reader.js';
 
 /* ---- minimal ZIP writer (store or deflate) for fixtures ---- */
 const CRC_TABLE = (() => {
@@ -350,4 +350,9 @@ test('readFailureTrace merges network and console diagnostics from the archive',
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('serializeDomTree escapes quotes so attribute values cannot break out', () => {
+  const html = serializeDomTree(['A', { title: `x" onclick="alert(1)`, alt: "it's" }, 'go']);
+  assert.equal(html, '<a title="x&quot; onclick=&quot;alert(1)" alt="it&#39;s">go</a>');
 });
