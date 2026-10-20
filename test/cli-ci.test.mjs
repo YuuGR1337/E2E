@@ -43,5 +43,5 @@ test('action.yml fits GitHub Marketplace limits and defaults to the package vers
   const description = yml.match(/^description: (.*)$/m)?.[1] ?? '';
   assert.ok(description.length > 0 && description.length < 125, `description is ${description.length} chars`);
   assert.match(yml, /^branding:\n  icon: \S+\n  color: \S+/m);
-  assert.match(yml, new RegExp(`default: ${pkg.version.replace(/\./g, '\\.')}\\b`));
+  assert.ok(yml.split('\n').some((line) => line.trim() === `default: ${pkg.version}`), 'action default version');
 });
