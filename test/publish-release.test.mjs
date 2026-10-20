@@ -202,7 +202,7 @@ test('publishing flips the draft and reports what went out', () => {
   const draft = { isDraft: true, body: `${ASSEMBLED_MARKER}\nnotes` };
   const published = {
     isDraft: false,
-    url: 'https://github.com/trajectiq-ai/E2E/releases/tag/v0.2.3',
+    url: 'https://github.com/xsignon-secure/E2E/releases/tag/v0.2.3',
     assets: [{ name: 'playwright-e2e-mcp-0.2.3.mcpb', size: 3_506_330 }],
   };
   const calls = [];

@@ -1,6 +1,6 @@
 name: Playwright E2E diagnosis
 description: Run a Playwright suite and post a classified diagnosis (file:line, failure kind, flaky verdict, fix diffs) to the job summary and the PR.
-author: trajectiq-ai
+author: xsignon-secure
 branding:
   icon: check-circle
   color: green

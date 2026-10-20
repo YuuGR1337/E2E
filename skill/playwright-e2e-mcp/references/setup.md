@@ -18,7 +18,7 @@ This skill only gives the agent instructions. The tools come from the
 ## Install the server
 
 The server is published on npm as `playwright-e2e-mcp` and in the official MCP
-Registry as `io.github.trajectiq-ai/E2E`. Pin a version in shared configs
+Registry as `io.github.xsignon-secure/E2E`. Pin a version in shared configs
 (`playwright-e2e-mcp@<version>`) so every machine runs the same build.
 
 **Claude Code**
@@ -42,7 +42,7 @@ claude mcp add playwright-e2e -- npx -y playwright-e2e-mcp
 ```
 
 Claude Desktop also has a one-click `.mcpb` extension on the project's
-[GitHub releases](https://github.com/trajectiq-ai/E2E/releases); it asks for the
+[GitHub releases](https://github.com/xsignon-secure/E2E/releases); it asks for the
 project root on install.
 
 **Codex CLI**
@@ -110,7 +110,7 @@ Exit code 0 means passed, 1 tests failed, 2 the run itself failed. On GitHub
 Actions it also writes to the job summary. As an Action:
 
 ```yaml
-- uses: trajectiq-ai/E2E@v0.3.0
+- uses: xsignon-secure/E2E@v0.3.0
   with:
     flaky-runs: 3
     suggest: 2

@@ -2,17 +2,17 @@
   "name": "playwright-e2e-mcp",
   "version": "0.3.0",
   "description": "MCP server that runs, diagnoses and fixes failing Playwright end-to-end tests: trace analysis, verified locator fixes, flaky ranking",
-  "author": "trajectiq-ai <trajectiq@gmail.com>",
-  "mcpName": "io.github.trajectiq-ai/E2E",
+  "author": "xsignon-secure (https://github.com/xsignon-secure)",
+  "mcpName": "io.github.xsignon-secure/E2E",
   "type": "module",
   "license": "MIT",
   "homepage": "https://playwright-e2e-mcp.vercel.app",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/trajectiq-ai/E2E.git"
+    "url": "git+https://github.com/xsignon-secure/E2E.git"
   },
   "bugs": {
-    "url": "https://github.com/trajectiq-ai/E2E/issues"
+    "url": "https://github.com/xsignon-secure/E2E/issues"
   },
   "keywords": [
     "mcp",

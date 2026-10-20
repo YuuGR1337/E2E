@@ -1,6 +1,6 @@
 # playwright-e2e-mcp
 
-[![CI](https://github.com/trajectiq-ai/E2E/actions/workflows/ci.yml/badge.svg)](https://github.com/trajectiq-ai/E2E/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/trajectiq-ai/E2E)](https://github.com/trajectiq-ai/E2E/releases) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.trajectiq--ai%2FE2E-2563eb)](https://registry.modelcontextprotocol.io/)
+[![CI](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml/badge.svg)](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/xsignon-secure/E2E)](https://github.com/xsignon-secure/E2E/releases) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.xsignon--secure%2FE2E-2563eb)](https://registry.modelcontextprotocol.io/)
 [![M8ven Score](https://m8ven.ai/badge/mcp/trajectiq-ai/e2e)](https://m8ven.ai/mcp/trajectiq-ai/e2e?s=readme)
 
 An [MCP](https://modelcontextprotocol.io) server that **diagnoses and fixes failing Playwright
@@ -52,12 +52,12 @@ work side by side in the same client.
 `https://playwright-e2e-mcp.vercel.app/api/mcp` returns for a client that sends the
 bearer token (without one, only `list-tests` and `get-failure` are listed):
 
-![Token-protected endpoint: initialize handshake and the tool list](https://raw.githubusercontent.com/trajectiq-ai/E2E/main/docs/demo-endpoint.png)
+![Token-protected endpoint: initialize handshake and the tool list](https://raw.githubusercontent.com/xsignon-secure/E2E/main/docs/demo-endpoint.png)
 
 **A real test run** — `run-test` served over stdio by `npx -y playwright-e2e-mcp`
 against the bundled `examples/sample-test.spec.ts` (actual output, unedited):
 
-![run-test result: 4 passed, 0 failed, 5.1s](https://raw.githubusercontent.com/trajectiq-ai/E2E/main/docs/demo-run-test.png)
+![run-test result: 4 passed, 0 failed, 5.1s](https://raw.githubusercontent.com/xsignon-secure/E2E/main/docs/demo-run-test.png)
 
 Images are rendered with `node scripts/gen-demo-images.mjs`: the run-test card is real
 captured output; the endpoint card is an illustration of the authenticated listing.
@@ -70,9 +70,9 @@ and every other MCP client — pick whichever route fits:
 | Route | How |
 | --- | --- |
 | **npm (canonical, fastest)** | `npx -y playwright-e2e-mcp` |
-| **MCP Registry** (registry-aware clients discover it automatically) | `io.github.trajectiq-ai/E2E` — [listing](https://registry.modelcontextprotocol.io/) |
-| **Any client, no npm account needed** | `npx -y github:trajectiq-ai/E2E#v0.3.0` (pin a release tag) |
-| **Claude Desktop, zero Node setup** | double-click the [`.mcpb` extension](https://github.com/trajectiq-ai/E2E/releases) |
+| **MCP Registry** (registry-aware clients discover it automatically) | `io.github.xsignon-secure/E2E` — [listing](https://registry.modelcontextprotocol.io/) |
+| **Any client, no npm account needed** | `npx -y github:xsignon-secure/E2E#v0.3.0` (pin a release tag) |
+| **Claude Desktop, zero Node setup** | double-click the [`.mcpb` extension](https://github.com/xsignon-secure/E2E/releases) |
 | **Remote-only clients (ChatGPT connectors)** | `https://playwright-e2e-mcp.vercel.app/api/mcp` |
 
 One line for the common clients:
@@ -391,11 +391,11 @@ Requirements:
 
 **No npm account needed** — install straight from GitHub (the `prepare` script
 builds `dist/` automatically on install). Pin a release tag: an unpinned
-`github:trajectiq-ai/E2E` runs whatever is on the default branch at that moment.
+`github:xsignon-secure/E2E` runs whatever is on the default branch at that moment.
 
 ```bash
-npx -y github:trajectiq-ai/E2E#v0.3.0
-npm install -D github:trajectiq-ai/E2E#v0.3.0 @playwright/test   # or as a project dependency
+npx -y github:xsignon-secure/E2E#v0.3.0
+npm install -D github:xsignon-secure/E2E#v0.3.0 @playwright/test   # or as a project dependency
 npx playwright install chromium
 ```
 
@@ -403,11 +403,11 @@ Or grab the packaged tarball from the repo's **GitHub Releases** page and instal
 it locally:
 
 ```bash
-npm install -D https://github.com/trajectiq-ai/E2E/releases/download/v0.3.0/playwright-e2e-mcp-0.3.0.tgz
+npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.3.0/playwright-e2e-mcp-0.3.0.tgz
 ```
 
 Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io/)** as
-`io.github.trajectiq-ai/E2E` — registry-aware clients discover it there, and every
+`io.github.xsignon-secure/E2E` — registry-aware clients discover it there, and every
 `v*` release tag republishes the entry from CI via [`server.json`](server.json).
 
 ### MCP client configuration
@@ -419,7 +419,7 @@ Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io
   "mcpServers": {
     "playwright-e2e": {
       "command": "npx",
-      "args": ["-y", "github:trajectiq-ai/E2E#v0.3.0"],
+      "args": ["-y", "github:xsignon-secure/E2E#v0.3.0"],
       "env": { "PW_MCP_PROJECT_ROOT": "/absolute/path/to/your/project" }
     }
   }
@@ -433,8 +433,8 @@ when the client launches it somewhere else (e.g. your home directory).
 **Codex / VS Code / Copilot CLIs:**
 
 ```bash
-codex mcp add playwright-e2e -- npx -y github:trajectiq-ai/E2E#v0.3.0
-code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:trajectiq-ai/E2E#v0.3.0"]}'
+codex mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.0
+code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","github:xsignon-secure/E2E#v0.3.0"]}'
 ```
 
 Codex's defaults fight this server: the first launch clones the repo and runs
@@ -445,13 +445,13 @@ Codex's defaults fight this server: the first launch clones the repo and runs
 ```toml
 [mcp_servers.playwright-e2e]
 command = "npx"
-args = ["-y", "github:trajectiq-ai/E2E#v0.3.0"]
+args = ["-y", "github:xsignon-secure/E2E#v0.3.0"]
 startup_timeout_sec = 60
 tool_timeout_sec = 600
 ```
 
 **Claude Desktop (one-click):** download and double-click the `.mcpb` Desktop
-Extension attached to the [latest release](https://github.com/trajectiq-ai/E2E/releases) —
+Extension attached to the [latest release](https://github.com/xsignon-secure/E2E/releases) —
 the bundle ships its own dependencies, so no Node setup is required. On install it
 asks you to pick your **project root** (required, no default: choose the project
 folder, not your home directory) and wires it
@@ -460,7 +460,7 @@ into `PW_MCP_PROJECT_ROOT`, so the tools point at a real project from the first 
 **Claude Code:**
 
 ```bash
-claude mcp add playwright-e2e -- npx -y github:trajectiq-ai/E2E#v0.3.0
+claude mcp add playwright-e2e -- npx -y github:xsignon-secure/E2E#v0.3.0
 ```
 
 **Gemini CLI / Qwen Code:** paste the `mcpServers` block above into
@@ -595,7 +595,7 @@ steps:
   - uses: actions/setup-node@v6
     with: { node-version: 24 }
   - run: npm ci && npx playwright install --with-deps chromium
-  - uses: trajectiq-ai/E2E@v0.3.0
+  - uses: xsignon-secure/E2E@v0.3.0
     with:
       flaky-runs: 3      # 0 skips the flaky verdict
       suggest: 2         # suggest-fix diffs for the first 2 failures
@@ -882,8 +882,8 @@ published **unsigned**, with a notice in the run and a line saying so in the
 notes. Add both — the private key stays out of the repository and out of the logs:
 
 ```bash
-gh secret set MCPB_KEY  --repo trajectiq-ai/E2E < ~/signing/key.pem
-gh secret set MCPB_CERT --repo trajectiq-ai/E2E < ~/signing/cert.pem
+gh secret set MCPB_KEY  --repo xsignon-secure/E2E < ~/signing/key.pem
+gh secret set MCPB_CERT --repo xsignon-secure/E2E < ~/signing/cert.pem
 ```
 
 Creating the release and uploading its assets needs `contents: write`, which the

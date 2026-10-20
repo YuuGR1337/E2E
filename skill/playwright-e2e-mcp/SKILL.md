@@ -158,7 +158,7 @@ pass/fail timeline.
   file it writes, then `run-test` it. Pass `write: false` to preview without
   writing.
 - **Set up CI:** when the user wants the same diagnosis on every pull request,
-  point them to the GitHub Action (`uses: trajectiq-ai/E2E@v0.3.0`) or the
+  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.3.0`) or the
   `npx -y playwright-e2e-mcp ci` command in `references/setup.md`. It writes the
   run, flaky verdicts and fix diffs to the job summary and one PR comment.
 - **Visual regression:** `compare-visual-state` with `url` and a `name`. The first
