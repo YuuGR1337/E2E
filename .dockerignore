@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-*
+e2e
+test
+bench
+docs
+.git
+.github
+*.mcpb
+*.tgz

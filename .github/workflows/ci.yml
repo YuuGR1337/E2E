@@ -163,6 +163,30 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The Dockerfile is what directories such as Glama build to check the
+  # server starts; build it and complete an MCP handshake inside it.
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - run: docker build -t playwright-e2e-mcp:ci .
+      - name: The image reports the package version
+        run: test "$(docker run --rm playwright-e2e-mcp:ci --version)" = "$(node -p "require('./package.json').version")"
+      - name: The image answers initialize and tools/list over stdio
+        shell: bash
+        run: |
+          out=$(printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | timeout 60 docker run -i --rm -e LOG_LEVEL=warn playwright-e2e-mcp:ci)
+          echo "$out" | tail -c 400
+          echo "$out" | grep -q '"name":"diagnose-flaky"'
+
   pack:
     name: npm pack dry run
     runs-on: ubuntu-latest

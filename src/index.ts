@@ -23,6 +23,15 @@ function isMainModule(): boolean {
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === 'ci') {
+    const { runCi, CI_USAGE } = await import('./cli/ci.js');
+    if (process.argv.includes('--help') || process.argv.includes('-h')) {
+      process.stdout.write(CI_USAGE);
+      return;
+    }
+    process.exitCode = await runCi(process.argv.slice(3));
+    return;
+  }
   if (process.argv.includes('--version') || process.argv.includes('-v')) {
     process.stdout.write(`${SERVER_VERSION}\n`);
     return;
@@ -32,10 +41,13 @@ async function main(): Promise<void> {
       [
         'playwright-e2e-mcp — MCP server for running and debugging Playwright tests',
         '',
-        'Usage: playwright-e2e-mcp [--version] [--help]',
+        'Usage: playwright-e2e-mcp [--tools=<list>] [--version] [--help]',
+        '       playwright-e2e-mcp ci [options]   run the suite and print a Markdown diagnosis (ci --help)',
         '',
         'Connects over stdio (MCP). Configuration via environment:',
         '  PW_MCP_PROJECT_ROOT        default project root (default: cwd)',
+        '  PW_MCP_TOOLS               tools to expose: names and/or profiles, comma separated',
+        '                             (all | core | triage | inspect | author); same as --tools',
         '  PW_MCP_ALLOWED_ROOTS       extra roots callers may pass as projectRoot',
         '  PW_MCP_BLOCK_PRIVATE_URLS  1 = URL tools refuse private/loopback/metadata addresses',
         '  LOG_LEVEL / MCP_LOG_LEVEL  debug | info | warn | error | silent (default: info)',
@@ -52,6 +64,9 @@ async function main(): Promise<void> {
     return;
   }
 
+  const toolsFlag = process.argv.find((arg) => arg.startsWith('--tools='));
+  if (toolsFlag) process.env.PW_MCP_TOOLS = toolsFlag.slice('--tools='.length);
+
   const { startServer } = await import('./server.js');
   await startServer();
 }
@@ -64,6 +79,6 @@ if (isMainModule()) {
   });
 }
 
-export { createServer, startServer, SERVER_NAME, SERVER_VERSION } from './server.js';
+export { createServer, startServer, resolveToolSelection, TOOL_PROFILES, SERVER_NAME, SERVER_VERSION } from './server.js';
 export { createMcpHttpHandler, handleNodeRequest, MAX_BODY_BYTES } from './http.js';
 export { logger };

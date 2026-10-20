@@ -112,11 +112,17 @@ Baselines live in `.pw-mcp/visual/`.
 | --- | --- | --- |
 | `testFiles` | string[] | Default: tests that failed in the last run |
 | `runs` | number | 2 to 10 (default 3) |
+| `isolate` | boolean | Repeat fully parallel (`workers` default 4), then repeat the failing tests with one worker (0.3.0+) |
+| `separateProcesses` | boolean | One Playwright process per run instead of one `--repeat-each` process; slower (0.3.0+) |
 | `browser`, `headed`, `workers`, `config` | | As `run-test` |
-| `timeoutMs` | number | Per run (default 120000) |
+| `timeoutMs` | number | Per run (default 120000); the single `--repeat-each` process gets this × `runs` |
 
-Runs with retries disabled and returns `CONSISTENTLY FAILING`, `FLAKY` or
-`NOT REPRODUCING`, a per-run table and the number of distinct error signatures.
+Runs with retries disabled and returns, per test, passes, failures, duration
+spread, first error and `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING`,
+plus the verdict block for the worst test. With `isolate`, a second table reads
+each failing test as "fails only in parallel", "flaky even alone" or "fails
+alone too". Versions before 0.3.0 return one run-level verdict and a per-run
+table instead.
 
 ## suggest-fix
 

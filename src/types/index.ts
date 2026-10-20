@@ -287,6 +287,16 @@ export interface RunTestOptions {
    * previous run — the fast fix → re-run loop.
    */
   lastFailed?: boolean;
+  /** Playwright --repeat-each: run every selected test N times in one process. */
+  repeatEach?: number;
+  /** Playwright --fully-parallel: spread tests of one file across workers. */
+  fullyParallel?: boolean;
+  /**
+   * Record every attempt (each repeat and retry) through a small extra
+   * reporter. The JSON report keeps only one result per test, so repeats
+   * are invisible there.
+   */
+  collectAttempts?: boolean;
   /** Abort when the MCP client disconnects. */
   signal?: AbortSignal;
   /** Called with Playwright's line-reporter progress while the run is going. */
@@ -335,6 +345,24 @@ export interface TestFailure {
   stdout?: string;
 }
 
+/** One attempt of one test (each repeat and retry), from the attempts reporter. */
+export interface TestAttempt {
+  /** Project-relative file path, posix separators. */
+  file: string;
+  line?: number;
+  title: string;
+  project?: string;
+  repeatEachIndex: number;
+  retry: number;
+  status: TestStatus;
+  /** Status the test was expected to end with (usually `passed`). */
+  expectedStatus?: string;
+  durationMs: number;
+  workerIndex?: number;
+  /** First line of the error, for failed attempts. */
+  message?: string;
+}
+
 /** One test's final outcome in a run (every test, not only failures). */
 export interface TestOutcome {
   file: string;
@@ -352,6 +380,8 @@ export interface RunTestResult {
   ok: boolean;
   /** Final outcome of every test in the run (feeds run history). */
   outcomes?: TestOutcome[];
+  /** Every attempt, when the run was started with collectAttempts. */
+  attempts?: TestAttempt[];
   exitCode: number | null;
   signalName: string | null;
   durationMs: number;

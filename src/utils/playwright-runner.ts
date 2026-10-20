@@ -46,6 +46,7 @@ import {
   toNativePath,
 } from './path-utils.js';
 import { logger } from './logger.js';
+import { ATTEMPTS_FILE_ENV, attemptsReporterPath, parseAttempts } from './attempts-reporter.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_LIST_TIMEOUT_MS = 60_000;
@@ -588,6 +589,9 @@ export async function runTests(options: RunTestOptions): Promise<RunTestResult> 
     args.push(`--project=${options.project}`);
   } else if (project) args.push(`--project=${project}`);
   if (options.headed) args.push('--headed');
+  const repeatEach = clampInt(options.repeatEach, 1, 100);
+  if (repeatEach !== undefined && repeatEach > 1) args.push(`--repeat-each=${repeatEach}`);
+  if (options.fullyParallel) args.push('--fully-parallel');
   const workers = clampInt(options.workers, 1, 64);
   if (workers !== undefined) args.push(`--workers=${workers}`);
   const retries = clampInt(options.retries, 0, 10);
@@ -605,12 +609,17 @@ export async function runTests(options: RunTestOptions): Promise<RunTestResult> 
     throw new PlaywrightMcpError('Caller arguments may not set --reporter', 'INVALID_PATH');
   }
   // The list reporter only feeds live progress; results always come from JSON.
-  args.push(options.onProgress ? '--reporter=json,list' : '--reporter=json');
+  const reporters = ['json'];
+  if (options.onProgress) reporters.push('list');
+  const attemptsPath = options.collectAttempts ? tempFilePath('pw-attempts', '.jsonl') : undefined;
+  if (attemptsPath) reporters.push(toNativePath(await attemptsReporterPath()));
+  args.push(`--reporter=${reporters.join(',')}`);
 
   const env = childEnv({
     PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath,
     FORCE_COLOR: '0',
     PW_TEST_HTML_REPORT_OPEN: 'never',
+    ...(attemptsPath ? { [ATTEMPTS_FILE_ENV]: toNativePath(attemptsPath) } : {}),
   });
 
   const timeoutMs = clampInt(options.timeoutMs, 1_000, 3_600_000) ?? DEFAULT_RUN_TIMEOUT_MS;
@@ -629,6 +638,7 @@ export async function runTests(options: RunTestOptions): Promise<RunTestResult> 
   const displayCommand = ['playwright', ...args].join(' ');
 
   const rawReport = (await readFileText(reportPath)) ?? extractJsonFromText(outcome.stdout);
+  const rawAttempts = attemptsPath ? await readFileText(attemptsPath) : null;
   const parsed = rawReport
     ? parseReportJson(rawReport, root)
     : {
@@ -697,6 +707,7 @@ export async function runTests(options: RunTestOptions): Promise<RunTestResult> 
     partial,
     stats: parsed.stats,
     outcomes: parsed.outcomes,
+    attempts: attemptsPath ? parseAttempts(rawAttempts ?? '', root) : undefined,
     failures: parsed.failures,
     failuresTruncated: parsed.failuresTruncated,
     stdoutTail: tail(outcome.stdout),

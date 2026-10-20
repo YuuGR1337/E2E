@@ -104,7 +104,7 @@ function resolveTracePath(
   return undefined;
 }
 
-function mapStatus(status?: string): TestStatus {
+export function mapStatus(status?: string): TestStatus {
   switch (status) {
     case 'passed':
       return 'passed';
