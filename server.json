@@ -19,11 +19,5 @@
         "type": "stdio"
       }
     }
-  ],
-  "remotes": [
-    {
-      "type": "streamable-http",
-      "url": "https://playwright-e2e-mcp.vercel.app/api/mcp"
-    }
   ]
 }
