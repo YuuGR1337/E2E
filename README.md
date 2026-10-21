@@ -1,4 +1,13 @@
-# playwright-e2e-mcp
+<p align="center">
+  <img src="docs/logo.png" alt="playwright-e2e-mcp logo: a heartbeat line that ends in a green check" width="140">
+</p>
+
+<h1 align="center">playwright-e2e-mcp</h1>
+
+<p align="center"><b>The test doctor for AI agents.</b><br>
+Your Playwright test fails. Your AI finds out why, fixes it, and proves the fix works.</p>
+
+<p align="center">
 
 [![CI](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml/badge.svg)](https://github.com/xsignon-secure/E2E/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/xsignon-secure/E2E)](https://github.com/xsignon-secure/E2E/releases) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.xsignon--secure%2FE2E-2563eb)](https://registry.modelcontextprotocol.io/)
 [![M8ven Score](https://m8ven.ai/badge/mcp/trajectiq-ai/e2e)](https://m8ven.ai/mcp/trajectiq-ai/e2e?s=readme)
@@ -7,9 +16,15 @@
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_server-0098FF?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522playwright-e2e%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522playwright-e2e-mcp%2522%255D%257D)
 [![Add to Claude Desktop](https://img.shields.io/badge/Claude_Desktop-.mcpb_bundle-D97757)](https://github.com/xsignon-secure/E2E/releases/latest)
 
-An [MCP](https://modelcontextprotocol.io) server that **diagnoses and fixes failing Playwright
-tests**. It is the layer that sits next to a browser-driving MCP: Playwright MCP gives an agent
-hands in the browser; this server gives it a test runner, a failure analyst and a verified fixer.
+</p>
+
+## What it is
+
+An [MCP](https://modelcontextprotocol.io) server and agent skill that gives your AI assistant
+(Claude, Cursor, VS Code Copilot, Gemini, Codex) a full Playwright toolkit: a **test runner**,
+a **failure detective** and a **fixer that checks its own work**.
+
+Other tools let an AI click around a browser. This one lets it **keep your test suite green**.
 
 ```
 run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ green
@@ -18,46 +33,59 @@ run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ 
    └─ background runs, progress ──▶ analyze-history (flaky / broken / regressed)
 ```
 
-What it does that a browser-driving MCP or a raw `npx playwright test` does not:
+## What it does
+
+| | You ask your AI… | It does this |
+|---|---|---|
+| 🏃 | "Run my tests" | Runs the suite and reports every failure with its file, line, cause and a fix hint. One root cause breaking 30 tests shows up as **one** problem. |
+| 🔍 | "Why did this fail?" | Reads Playwright's trace: the page at the moment of failure, the broken request, the console error. No guessing. |
+| 🛠️ | "Fix it" | Swaps in a locator proven unique on the page, **re-runs the test**, and undoes the edit if it's still red. If the button is really gone, it tells you it's an app bug instead of hiding it. |
+| 🎲 | "Is this test flaky?" | Re-runs it many ways (repeated, alone, in random order) and names the exact test and seed that cause the flake. |
+| 📈 | "What's been breaking lately?" | Keeps a local run history and separates flaky, newly broken and always-broken tests. |
+| ♿ | "Check this page for accessibility" | Runs axe-core (WCAG 2.2 AA) and returns each problem with a ready-to-paste locator and regression test. |
+| 🔐 | "Test the page after login" | Works behind sign-in with saved sessions, headers and click/fill steps. |
+| 🤖 | "Do it in CI" | A [GitHub Action and `ci` command](#ci-github-action-and-ci-command) post the diagnosis, flaky verdict and fix diffs on your PR. |
+
+**Why it stands out**
+
+- **Fixes are proven, not guessed.** Every fix is re-run before it's kept.
+- **Honest.** It won't paper over a real bug to make a test pass.
+- **Lean.** In the [benchmark](bench/RESULTS.md), finding and fixing a broken locator took about
+  **5,300 tokens** here versus about **7,400** with Playwright MCP plus a shell.
+- **Teaches as it works.** The bundled skill carries a guide to writing tests that stay green
+  (locators, waiting, auth, test data, mocking, flake patterns, review checklist).
+- **Ready in one line.** `npx -y playwright-e2e-mcp init` sets up Claude Code, Cursor and VS Code.
+
+<details>
+<summary><b>The technical details</b></summary>
 
 - **Structured runs.** Stats plus each failure's `file:line`, kind (assertion, timeout,
   dead dev server, syntax error, crash, full disk…) and a concrete fix hint. Failures that
-  share one cause are grouped, so 30 tests broken by one dead server read as one problem.
-  Long suites run in the background with live progress.
+  share one cause are grouped. Long suites run in the background with live progress.
 - **Diagnosis from the trace.** The DOM at the moment of failure, the failed action, the
   4xx/5xx requests and console errors, read from Playwright's own trace.
-- **Fixes that are proven, not guessed.** `suggest-fix` matches a broken locator against the
-  DOM at failure, swaps in a Playwright locator proven unique on the page
+- **Verified fixes.** `suggest-fix` matches a broken locator against the DOM at failure, swaps
+  in a Playwright locator proven unique on the page
   (`getByRole('button', { name: 'Proceed to checkout' })`), re-runs the test and reverts the
   edit if it is still red. When nothing on the page plausibly matches, it says the element is
-  missing and does not patch the test to hide a real bug.
+  missing and does not patch the test.
 - **Flakiness with evidence.** `diagnose-flaky` repeats failing tests in one process and
-  gives a verdict per test; with `isolate: true` it re-runs them alone to tell a shared-state
-  bug that only bites in parallel from a race inside the test, and with `order: true` it runs
-  the files in random orders to catch a test that only passes when another one ran first,
-  naming that test and the seed that reproduces it. Every run is recorded locally;
-  `analyze-history` separates tests that flip (flaky) from ones that started failing
-  (regressed) or always fail (broken), and groups failures that share one cause.
-- **In CI too.** A [GitHub Action and `ci` command](#ci-github-action-and-ci-command) post the
-  same diagnosis, flaky verdict and fix diffs to the job summary and the PR.
+  gives a verdict per test; `isolate: true` re-runs them alone to tell a shared-state bug from
+  a race inside the test, and `order: true` runs files in random orders to catch an order
+  dependency, naming the test and the seed that reproduces it. `analyze-history` separates
+  flaky, regressed and broken tests from the local run record.
 - **Accessibility.** `audit-accessibility` runs axe-core against WCAG 2.2 AA on any page,
-  signed in or after steps, and returns each violation with the offending elements as verified
-  locators and a regression check to paste into the spec.
+  signed in or after steps, with offending elements as verified locators.
 - **Pages behind a login.** Every page tool accepts a Playwright `storageState`, extra
   headers, and click/fill steps to reach a modal or a later step.
-- **An agent skill that teaches the craft.** The bundled skill drives the tools and carries a
-  guide to writing tests that stay green (locators, waiting, auth, data isolation, mocking,
-  flake patterns, review checklist).
-- **Small on the wire.** In the [benchmark](bench/RESULTS.md), diagnosing and fixing one
-  drifted locator cost about 5,300 tokens here against about 7,400 with Playwright MCP plus a
-  shell, and the fix was applied and verified without the agent editing anything.
+
+</details>
 
 ### What it does not do
 
-It does not drive an exploratory browsing session step by step, and it does not replace
-Playwright's own Test Agents (planner, generator, healer) inside VS Code. Use Playwright MCP
-for interactive browsing and this server for running, diagnosing and fixing the suite; they
-work side by side in the same client.
+It doesn't drive an exploratory browsing session step by step, and it doesn't replace
+Playwright's own Test Agents inside VS Code. Use Playwright MCP for interactive browsing and
+this server for running, diagnosing and fixing the suite. They work side by side.
 
 ## Demo
 
