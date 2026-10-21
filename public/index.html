@@ -51,6 +51,10 @@
         read-only tools, <code>list-tests</code>, <code>get-failure</code> and <code>analyze-history</code>.)
       </p>
       <p>
+        <strong>claude.ai connectors</strong> sign in with OAuth instead: add the endpoint as a custom
+        connector, leave the OAuth fields empty, and type the access key on the sign-in page that opens.
+      </p>
+      <p>
         <strong>What it can and cannot do:</strong> this endpoint runs in a cloud function, so it can
         inspect and validate <em>public</em> URLs, but it cannot see your repository, your
         <code>localhost</code> or your test suite. To run and fix your own tests, run the server next
