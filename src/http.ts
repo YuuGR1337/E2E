@@ -17,6 +17,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createMcpHandler, hostHeaderValidationResponse } from '@modelcontextprotocol/server';
 import type { McpHttpHandler } from '@modelcontextprotocol/server';
+import { createOAuthServer } from './oauth.js';
 import { createServer, READ_ONLY_TOOLS } from './server.js';
 import { setMaxChildren, setScrubChildEnv } from './utils/playwright-runner.js';
 import { setBlockPrivateUrls } from './utils/url-policy.js';
@@ -40,6 +41,11 @@ export interface McpHttpHandlerOptions {
    * deployment's own Vercel hostnames are accepted.
    */
   allowedHosts?: string[];
+  /**
+   * Path the MCP endpoint is served on, advertised as the OAuth protected
+   * resource. Defaults to `/api/mcp`, where the Vercel function lives.
+   */
+  mcpPath?: string;
 }
 
 /** Tokens shorter than this are refused: they can be guessed. */
@@ -101,6 +107,9 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions = {}): McpHt
   if (!token) {
     logger.warn('PW_MCP_HTTP_TOKEN is not set; serving read-only tools only', { tools: READ_ONLY_TOOLS });
   }
+  // With a token, OAuth clients (claude.ai connectors) sign in by typing it
+  // on the authorize page; without one the endpoint is open and needs none.
+  const oauth = token ? createOAuthServer({ token, mcpPath: options.mcpPath ?? '/api/mcp' }) : undefined;
   const inner = createMcpHandler(
     (context) =>
       createServer({
@@ -120,8 +129,13 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions = {}): McpHt
         const rejected = hostHeaderValidationResponse(request, allowedHosts);
         if (rejected) return rejected;
       }
-      if (token && !tokenMatches(request.headers.get('authorization'), token)) {
-        return jsonResponse(401, { error: 'unauthorized' }, { 'www-authenticate': 'Bearer' });
+      if (oauth) {
+        const oauthResponse = await oauth.handle(request);
+        if (oauthResponse) return oauthResponse;
+        const authorization = request.headers.get('authorization');
+        if (!tokenMatches(authorization, token) && !oauth.verifyAccessToken(authorization)) {
+          return jsonResponse(401, { error: 'unauthorized' }, { 'www-authenticate': oauth.challenge(request) });
+        }
       }
       return inner.fetch(request, requestOptions);
     },

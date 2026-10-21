@@ -609,7 +609,7 @@ Streamable HTTP bridge for exactly that case:
 | --- | --- |
 | **Endpoint** | `https://playwright-e2e-mcp.vercel.app/api/mcp` |
 | **Transport** | MCP Streamable HTTP (`POST` JSON in, JSON or SSE out) |
-| **Auth** | bearer token (`PW_MCP_HTTP_TOKEN`). The deployment at this URL requires it; a bridge started without the variable serves only the read-only tools |
+| **Auth** | bearer token (`PW_MCP_HTTP_TOKEN`), or OAuth sign-in with that token as the access key (for claude.ai connectors). The deployment at this URL requires one of them; a bridge started without the variable serves only the read-only tools |
 | **Source** | [`api/mcp.ts`](api/mcp.ts) → [`src/http.ts`](src/http.ts) |
 
 The bridge runs the *same* `createServer()` as the stdio transport; the SDK
@@ -642,6 +642,20 @@ mode** → *Create custom connector* → paste the endpoint above. Authenticatio
 deployment choose the connector's **API key** authentication and send
 `Authorization: Bearer <token>` — or point the connector at your own deployment
 with `PW_MCP_HTTP_TOKEN` unset.
+
+**Add it to claude.ai (or Claude Desktop's connectors):** Settings → Connectors →
+*Add custom connector* → paste the endpoint above and leave the OAuth fields
+empty. Claude registers itself and opens a sign-in page; type the deployment's
+access key (the value of `PW_MCP_HTTP_TOKEN`) and press **Allow access**. The
+bridge is its own small OAuth 2.1 server (discovery, dynamic client
+registration, authorization code with PKCE S256, refresh tokens) and keeps no
+state: client ids, codes and tokens are signed with a key derived from
+`PW_MCP_HTTP_TOKEN`, access tokens last an hour and refresh tokens 30 days, and
+changing `PW_MCP_HTTP_TOKEN` signs every connected client out. The sign-in page
+shows which site will receive access, so only type the key when that is the
+app you are connecting. Source: [`src/oauth.ts`](src/oauth.ts); the
+`/.well-known/oauth-*` and `/oauth/*` paths reach the function through the
+rewrites in [`vercel.json`](vercel.json).
 
 To self-host the open, read-only variant, deploy this repo with
 `PW_MCP_HTTP_TOKEN` unset; nothing else changes.
