@@ -17,6 +17,7 @@ test('parseInitArgs reads clients, flags and rejects unknown clients', () => {
   assert.equal(o.dryRun, true);
   assert.equal(o.projectRoot, path.resolve('/p'));
   assert.equal(parseInitArgs(['--client', 'all']).clients.length, 6);
+  assert.deepEqual(parseInitArgs(['--client', 'gemini', '--client', 'codex']).clients, ['gemini', 'codex']);
   assert.equal(parseInitArgs([]).clients, undefined);
   assert.throws(() => parseInitArgs(['--client', 'emacs']), /--client/);
   assert.throws(() => parseInitArgs(['--bogus']), /Unknown option/);
@@ -126,4 +127,23 @@ test('plugin, marketplace and Gemini manifests agree with package.json', () => {
   assert.equal(market.plugins[0].name, plugin.name);
   for (const dir of plugin.skills) assert.ok(existsSync(new URL(`../${dir}/SKILL.md`, import.meta.url)), dir);
   assert.ok(existsSync(new URL(`../${gemini.contextFileName}`, import.meta.url)));
+});
+
+test('the hosted bridge explains a missing browser instead of suggesting an install', async () => {
+  const { toolError } = await import('../dist/tools/shared.js');
+  const { missingPlaywrightMessage } = await import('../dist/utils/project-detector.js');
+  const saved = process.env.VERCEL;
+  try {
+    delete process.env.VERCEL;
+    assert.match(toolError('NO_PLAYWRIGHT', 'Playwright is not installed in /p', 'Run: npm install').content[0].text, /npm install/);
+    process.env.VERCEL = '1';
+    const text = toolError('NO_PLAYWRIGHT', 'Playwright is not installed in /var/task', 'Run: npm install').content[0].text;
+    assert.match(text, /hosted endpoint has no browser/);
+    assert.match(text, /playwright-e2e-mcp init/);
+    assert.doesNotMatch(text, /\/var\/task/);
+    assert.match(missingPlaywrightMessage({ packageManager: 'npm' }).hint, /playwright-e2e-mcp init/);
+  } finally {
+    if (saved === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = saved;
+  }
 });

@@ -56,7 +56,7 @@ export function parseInitArgs(argv: string[], cwd = process.cwd()): InitOptions 
     args: argv,
     strict: true,
     options: {
-      client: { type: 'string' },
+      client: { type: 'string', multiple: true },
       'project-root': { type: 'string' },
       tools: { type: 'string' },
       'no-skill': { type: 'boolean' },
@@ -65,7 +65,8 @@ export function parseInitArgs(argv: string[], cwd = process.cwd()): InitOptions 
   });
   let clients: Client[] | undefined;
   if (values.client !== undefined) {
-    const names = values.client.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    // `--client gemini --client codex` and `--client gemini,codex` mean the same.
+    const names = values.client.join(',').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     if (names.includes('all')) clients = [...CLIENTS];
     else {
       const unknown = names.filter((n) => !(CLIENTS as readonly string[]).includes(n));

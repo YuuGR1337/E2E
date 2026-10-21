@@ -534,7 +534,9 @@ Listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io
 }
 ```
 
-**Claude Desktop / Cursor / Windsurf:** add the same block to their MCP config file.
+**Claude Desktop / Cursor / Windsurf / Cline:** add the same block to their MCP config file
+(Cline: *MCP Servers → Configure*). **Zed** and other clients that take a command: run `npx`
+with the arguments `-y playwright-e2e-mcp`.
 The server uses its working directory as the project root; set `PW_MCP_PROJECT_ROOT`
 when the client launches it somewhere else (e.g. your home directory).
 
@@ -673,9 +675,10 @@ codex mcp add playwright-e2e-remote --url https://playwright-e2e-mcp.vercel.app/
 **What to expect:** `list-tests` works and reports the specs bundled with the
 deployment. Even with a token, tools that spawn a browser (`run-test`,
 `inspect-page`, `validate-selector`, `diagnose-flaky`, …) cannot download
-Chromium in a serverless function, so they return their normal `NO_PLAYWRIGHT`
-hint. Use the stdio install for real runs; the hosted endpoint is for discovery
-and for clients that cannot run local processes.
+Chromium in a serverless function, so they return `NO_PLAYWRIGHT` with a note
+that points to the local install. Use the stdio install for real runs; the
+hosted endpoint is for discovery and for clients that cannot run local
+processes.
 
 ```bash
 # verify the handshake without any client (the live deployment needs the token;

@@ -211,6 +211,17 @@ export function selectConfig(candidates: string[], selection?: string | number):
 }
 
 /** Install instructions for a project where Playwright is missing. */
+/** True on the hosted (Vercel) bridge, which ships no browser and no Playwright. */
+export function isHostedDeployment(): boolean {
+  return Boolean(process.env.VERCEL);
+}
+
+/** What to tell a caller of the hosted bridge that asked for a browser or a test run. */
+export const HOSTED_NO_BROWSER = {
+  message: 'The hosted endpoint has no browser or Playwright install, so it cannot run tests or open pages.',
+  hint: 'Run the server next to your project instead: `npx -y playwright-e2e-mcp init` in the project folder, then restart your AI app. It runs your own tests and can open localhost and public pages.',
+};
+
 export function missingPlaywrightMessage(detection: ProjectDetection): {
   message: string;
   hint: string;
@@ -227,6 +238,7 @@ export function missingPlaywrightMessage(detection: ProjectDetection): {
     detection.packageManager === 'unknown'
       ? 'npx playwright install'
       : `${detection.packageManager === 'npm' ? 'npx' : detection.packageManager} playwright install`;
+  if (isHostedDeployment()) return HOSTED_NO_BROWSER;
   return {
     message: 'Playwright is not installed in this project (no @playwright/test or playwright found in node_modules).',
     hint: `Run:\n  ${install}\n  ${browsers}\nthen retry.`,

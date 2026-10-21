@@ -34,7 +34,7 @@ import {
 import { formatLocator, parseLocator } from '../utils/locator-expr.js';
 import type { LocatorCall } from '../utils/locator-expr.js';
 import { PROBE_SCRIPT } from './probe-script.js';
-import { selectConfig } from '../utils/project-detector.js';
+import { HOSTED_NO_BROWSER, isHostedDeployment, selectConfig } from '../utils/project-detector.js';
 import { childEnv, runProcess } from '../utils/playwright-runner.js';
 import { extractJsonFromText } from '../utils/report-parser.js';
 import { BLOCKED_RANGES, assertUrlAllowed, blockPrivateUrls } from '../utils/url-policy.js';
@@ -65,6 +65,9 @@ export function toolError(
   hint?: string,
   details?: string,
 ): ToolResponse {
+  if (kind === 'NO_PLAYWRIGHT' && isHostedDeployment()) {
+    ({ message, hint } = HOSTED_NO_BROWSER);
+  }
   const lines = [`## ❌ ${kind}`, '', message];
   if (hint) lines.push('', '**How to fix:**', hint);
   if (details) lines.push('', '```text', details.trim(), '```');
