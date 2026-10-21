@@ -55,10 +55,11 @@
         connector, leave the OAuth fields empty, and type the access key on the sign-in page that opens.
       </p>
       <p>
-        <strong>What it can and cannot do:</strong> this endpoint runs in a cloud function, so it can
-        inspect and validate <em>public</em> URLs, but it cannot see your repository, your
-        <code>localhost</code> or your test suite. To run and fix your own tests, run the server next
-        to your code: <code>npx -y playwright-e2e-mcp</code> (see the README for one-line installs).
+        <strong>What it can and cannot do:</strong> this endpoint runs in a cloud function with no browser, so it
+        can list the bundled example specs but cannot run tests or open pages, and it cannot see your
+        repository or your <code>localhost</code>. To run, diagnose and fix your own tests, or to inspect and
+        audit pages, run the server next to your code: <code>npx -y playwright-e2e-mcp init</code> (see the
+        README for one-line installs).
       </p>
     </main>
   </body>
