@@ -46,7 +46,7 @@
         This hosted endpoint is for clients that only accept remote connectors (ChatGPT custom
         connectors, remote MCP clients). <strong>It requires a bearer token</strong>: a request
         without <code>Authorization: Bearer &lt;token&gt;</code> is answered
-        <code>401 {"error":"unauthorized"}</code>, and with it all eleven tools are served. (A
+        <code>401 {"error":"unauthorized"}</code>, and with it all twelve tools are served. (A
         self-hosted bridge started without <code>PW_MCP_HTTP_TOKEN</code> instead serves just the
         read-only tools, <code>list-tests</code>, <code>get-failure</code> and <code>analyze-history</code>.)
       </p>
