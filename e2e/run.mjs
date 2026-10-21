@@ -36,6 +36,7 @@ const serverEntry = path.join(repoRoot, 'dist', 'index.js');
 const COLORS = { blue: 'rgb(37, 99, 235)', red: 'rgb(220, 38, 38)' };
 const EXPECTED_TOOLS = [
   'analyze-history',
+  'audit-accessibility',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',
@@ -139,6 +140,13 @@ function startFixtureServer() {
       if (req.method === 'GET' && req.url === '/login') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end('<!doctype html><title>Sign in</title><h1>Sign in</h1><label for="email">Email</label><input id="email"><button>Sign in</button>');
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/a11y') {
+        // Known violations: an image without alt text, an unlabeled input
+        // and a button with no accessible name.
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Signup</title></head><body><main><h1>Signup</h1><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="40"><form><input type="email"><button type="submit" data-testid="go"><svg width="10" height="10"></svg></button></form></main></body></html>');
         return;
       }
       if (req.method === 'GET' && (req.url === '/' || req.url.startsWith('/?'))) {
@@ -294,7 +302,7 @@ async function callTool(client, name, args, timeoutMs = 150_000, meta) {
 /* ------------------------------------------------------------------ */
 
 function cleanFixture() {
-  const stale = ['test-results', 'playwright-report', 'blob-report', '.pw-mcp', '.playwright-e2e-mcp', '.auth', 'tests/generated', 'tests/.flaky-marker', 'tests/heal.spec.ts', 'tests/slot.spec.ts', 'tests/.slot-lock'];
+  const stale = ['test-results', 'playwright-report', 'blob-report', '.pw-mcp', '.playwright-e2e-mcp', '.auth', 'tests/generated', 'tests/.flaky-marker', 'tests/heal.spec.ts', 'tests/slot.spec.ts', 'tests/order.spec.ts', 'tests/.slot-lock'];
   for (const entry of stale) {
     rmSync(path.join(fixtureRoot, entry), { recursive: true, force: true });
   }
@@ -403,6 +411,22 @@ async function phaseLivePage(client, origin) {
   contains('page state line names the session file', loggedIn.text, 'session `.auth/user.json`');
   contains('actions reach the settings dialog', loggedIn.text, "getByRole('heading', { name: 'Settings' })");
   contains('locators inside the dialog are verified', loggedIn.text, "getByRole('textbox', { name: 'Nickname' })");
+
+  const audit = await callTool(client, 'audit-accessibility', { url: `${origin}/a11y` }, 90_000);
+  check('audit-accessibility reports violations', !audit.isError && /## ♿ \d+ accessibility violations/.test(audit.text), audit.text.slice(0, 600));
+  contains('audit flags the image without alt text', audit.text, '`image-alt`');
+  contains('audit flags the unlabeled input', audit.text, '`label`');
+  contains('audit names the button by a verified locator', audit.text, "getByTestId('go')");
+  contains('audit cites the WCAG criterion', audit.text, 'WCAG 1.1.1');
+  contains('audit hands back a regression check', audit.text, 'new AxeBuilder({ page })');
+
+  const cleanAudit = await callTool(
+    client,
+    'audit-accessibility',
+    { url: `${origin}/account`, storageState: '.auth/user.json', actions: [{ type: 'click', locator: "getByRole('button', { name: 'Open settings' })" }] },
+    90_000,
+  );
+  check('audit runs behind the login and after actions', !cleanAudit.isError && cleanAudit.text.includes('session `.auth/user.json`'), cleanAudit.text.slice(0, 600));
 
   const escape = await callTool(client, 'inspect-page', { url: origin, storageState: '../../package.json' }, 30_000);
   check('storageState outside the project is refused', escape.isError && escape.text.includes('INVALID_PATH'), escape.text.slice(0, 300));
@@ -539,6 +563,35 @@ async function phaseTestRuns(client, origin) {
   contains('isolate shows every run alone passing', isolated.text, '3/3 passed');
   rmSync(path.join(fixtureRoot, 'tests', 'slot.spec.ts'), { force: true });
   rmSync(path.join(fixtureRoot, 'tests', '.slot-lock'), { force: true });
+
+  // Order dependence: the checkout test passes only when the add-to-cart
+  // test ran first in the same worker. PW_MCP_SHUFFLE_SEEDS (set in main)
+  // pins the random orders: seeds 1 and 2 keep file order, seed 4 flips it.
+  writeFileSync(
+    path.join(fixtureRoot, 'tests', 'order.spec.ts'),
+    [
+      "import { expect, test } from '@playwright/test';",
+      '',
+      'const cart = globalThis as { __cart?: string[] };',
+      '',
+      "test('adds a book to the cart', async () => {",
+      "  cart.__cart = ['book'];",
+      '  expect(cart.__cart).toHaveLength(1);',
+      '});',
+      '',
+      "test('checkout lists the book', async () => {",
+      "  expect(cart.__cart ?? []).toContain('book');",
+      '});',
+      '',
+    ].join('\n'),
+  );
+  const ordered = await callTool(client, 'diagnose-flaky', { testFiles: ['tests/order.spec.ts'], runs: 3, order: true }, 600_000);
+  contains('order: plain repeats see nothing wrong', ordered.text, '**NOT REPRODUCING**');
+  contains('order: shuffled runs are reported', ordered.text, '### Test order (`--shuffle`, one worker)');
+  contains('order: the dependent test is read as order dependent', ordered.text, '🔗 **order dependent**');
+  contains('order: it names the test it relies on', ordered.text, 'Relies on: `adds a book to the cart`');
+  contains('order: it hands back the reproducing seed', ordered.text, '--shuffle=4');
+  rmSync(path.join(fixtureRoot, 'tests', 'order.spec.ts'), { force: true });
 
   const generatedPath = path.join(fixtureRoot, 'tests', 'generated', 'click-the-call-to-action-button.spec.ts');
   const generate = await callTool(client, 'generate-e2e-test', { description: 'click the call to action button', pageUrl: origin }, 120_000);
@@ -691,6 +744,7 @@ async function main() {
       ...process.env,
       PW_MCP_PROJECT_ROOT: fixtureRoot,
       FIXTURE_PORT: new URL(fixture.origin).port,
+      PW_MCP_SHUFFLE_SEEDS: '1,4,2',
       LOG_LEVEL: process.env.E2E_LOG_LEVEL ?? 'warn',
       FORCE_COLOR: '0',
     },

@@ -148,3 +148,48 @@ test('parseAttempts relativizes paths, strips ANSI and skips junk lines', () => 
   assert.equal(attempts[1].status, 'failed');
   assert.equal(attempts[1].durationMs, 0);
 });
+
+test('supportsShuffle needs Playwright 1.64 or newer', async () => {
+  const { supportsShuffle } = await import('../dist/tools/diagnose-flaky.js');
+  assert.equal(supportsShuffle('1.64.0'), true);
+  assert.equal(supportsShuffle('1.65.2'), true);
+  assert.equal(supportsShuffle('2.0.0'), true);
+  assert.equal(supportsShuffle('1.63.9'), false);
+  assert.equal(supportsShuffle(null), false);
+});
+
+test('analyzeOrder reads a test that needs another test first as order dependent', async () => {
+  const { analyzeOrder } = await import('../dist/tools/diagnose-flaky.js');
+  const a = (title, status) => ({ file: 'tests/cart.spec.ts', title, project: 'chromium', repeatEachIndex: 0, retry: 0, status, durationMs: 5, message: status === 'failed' ? 'expected cart to contain book' : undefined });
+  const runs = [
+    { seed: '1', attempts: [a('adds', 'passed'), a('checkout', 'passed'), a('other', 'passed')] },
+    { seed: '4', attempts: [a('checkout', 'failed'), a('other', 'passed'), a('adds', 'passed')] },
+    { seed: '2', attempts: [a('other', 'passed'), a('adds', 'passed'), a('checkout', 'passed')] },
+  ];
+  const replay = [{ seed: '4', attempts: [a('checkout', 'failed'), a('other', 'passed'), a('adds', 'passed')] }];
+  const findings = analyzeOrder(runs, replay);
+  const checkout = findings.find((f) => f.title === 'checkout');
+  assert.equal(checkout.reading, 'ORDER DEPENDENT');
+  assert.deepEqual(checkout.failedSeeds, ['4']);
+  assert.deepEqual(checkout.passedSeeds, ['1', '2']);
+  assert.deepEqual(checkout.reliesOn, ['adds']);
+  assert.deepEqual(checkout.suspects, []);
+  assert.equal(findings.find((f) => f.title === 'adds').reading, 'PASSES IN EVERY ORDER');
+});
+
+test('analyzeOrder names a test that breaks another, and tells timing from order on replay', async () => {
+  const { analyzeOrder } = await import('../dist/tools/diagnose-flaky.js');
+  const a = (title, status) => ({ file: 't.spec.ts', title, repeatEachIndex: 0, retry: 0, status, durationMs: 1 });
+  const runs = [
+    { seed: '7', attempts: [a('logout', 'passed'), a('profile', 'failed')] },
+    { seed: '8', attempts: [a('profile', 'passed'), a('logout', 'passed')] },
+  ];
+  const broken = analyzeOrder(runs, [{ seed: '7', attempts: [a('logout', 'passed'), a('profile', 'failed')] }]).find((f) => f.title === 'profile');
+  assert.equal(broken.reading, 'ORDER DEPENDENT');
+  assert.deepEqual(broken.suspects, ['logout']);
+  const timing = analyzeOrder(runs, [{ seed: '7', attempts: [a('logout', 'passed'), a('profile', 'passed')] }]).find((f) => f.title === 'profile');
+  assert.equal(timing.reading, 'FLAKY IN ANY ORDER');
+  assert.deepEqual(timing.replay, { seed: '7', failedAgain: false });
+  const always = analyzeOrder([{ seed: '1', attempts: [a('x', 'failed')] }, { seed: '2', attempts: [a('x', 'timedOut')] }]);
+  assert.equal(always[0].reading, 'FAILS IN EVERY ORDER');
+});

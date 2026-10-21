@@ -101,7 +101,7 @@ test('initialize handshake answers with server info', async () => {
   assert.match(res.headers.get('content-type') ?? '', /(?:application\/json|text\/event-stream)/);
 });
 
-test('tools/list exposes all eleven tools', async () => {
+test('tools/list exposes all twelve tools', async () => {
   const { res, json } = await post({
     jsonrpc: '2.0',
     id: 2,
@@ -113,6 +113,7 @@ test('tools/list exposes all eleven tools', async () => {
   const names = json.result.tools.map((tool) => tool.name).sort();
   assert.deepEqual(names, [
     'analyze-history',
+    'audit-accessibility',
     'compare-visual-state',
     'diagnose-flaky',
     'generate-e2e-test',

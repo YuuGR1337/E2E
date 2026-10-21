@@ -1,6 +1,6 @@
 ---
 name: playwright-e2e-mcp
-description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism bugs from races, signed-in page inspection and local run history. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a test is flaky or which tests are unstable, repair a selector that no longer matches, write a new Playwright test, or check a page for visual regressions.
+description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results grouped by root cause, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism, test-order and timing bugs, signed-in page inspection, WCAG accessibility audits and local run history, plus a guide to writing tests that stay green. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a test is flaky or which tests are unstable, repair a selector that no longer matches, write or review a Playwright test, check a page for accessibility or visual regressions.
 ---
 
 # Playwright E2E with playwright-e2e-mcp
@@ -13,22 +13,26 @@ and concrete next steps. It can also propose and apply a verified fix for a brok
 locator, inspect pages behind a login, run long suites in the background and keep
 a local history of every run.
 
-This skill is written for playwright-e2e-mcp 0.3.0 and works with 0.2.0 or
+This skill is written for playwright-e2e-mcp 0.4.0 and works with 0.2.0 or
 newer. If `suggest-fix`, `get-run-status` or `analyze-history` is missing, the
 server is older than 0.2.0: use the steps that do not need those tools and tell
 the user to update it. `diagnose-flaky`'s per-test table and `isolate` option
-arrived in 0.3.0.
+arrived in 0.3.0; `audit-accessibility`, `diagnose-flaky`'s `order` option and
+root-cause grouping in `run-test` arrived in 0.4.0.
 
 ## Before you start
 
 1. Check that the server's tools are available. They are named `run-test`,
    `get-run-status`, `get-failure`, `suggest-fix`, `inspect-page`,
    `validate-selector`, `list-tests`, `generate-e2e-test`,
-   `compare-visual-state`, `diagnose-flaky` and `analyze-history` (your client
+   `compare-visual-state`, `audit-accessibility`, `diagnose-flaky` and
+   `analyze-history` (your client
    may prefix them, e.g. `mcp__playwright-e2e__run-test`).
 2. If they are all missing, stop and tell the user the MCP server is not
    connected. Point them to `references/setup.md` for the one-line install for
-   their client. Do not fall back to shelling out to `npx playwright test` unless
+   their client (`npx -y playwright-e2e-mcp init` sets up every client the
+   project uses). Writing or reviewing tests by hand still works: follow
+   `references/writing-tests.md`. Do not fall back to shelling out to `npx playwright test` unless
    the user asks. If only some are missing, the server may run a smaller tool
    profile (`--tools=core` exposes `run-test`, `get-run-status`, `get-failure`,
    `suggest-fix`, `diagnose-flaky` and `list-tests`); work with what is there and
@@ -49,7 +53,10 @@ Follow these steps in order. Do not edit code before step 3.
    Omit `testFiles` only when the user asks for the whole suite. Failing tests are
    retried once by default, so a test that passes on retry is reported as
    **flaky**, not failed. For a long suite pass `background: true` and poll
-   `get-run-status` with `waitSeconds: 30`.
+   `get-run-status` with `waitSeconds: 30`. When several tests fail the same
+   way, the result says how many distinct causes there are and shows each
+   cause once: fix the cause, not each test (a dead server or one changed
+   shared component often fails dozens of tests).
 2. **Read the failure.** For each failure, call `get-failure` with its 1-based
    `index`. Read the message and code frame, expected vs actual, the failure kind,
    the DOM snapshot at failure, the failed action and its selector, failed network
@@ -138,6 +145,20 @@ failing ones with one worker, and reads each one:
 - **flaky even alone**: the race is inside the test or the app.
 - **fails alone too**: a real bug, not parallelism.
 
+When a test fails in the full suite but `diagnose-flaky` on that test alone says
+**NOT REPRODUCING**, suspect test order: call it again with `order: true` and
+the spec file(s) in `testFiles` (Playwright 1.64+). It runs the files in random
+orders with one worker, replays a failing order, and reads each test:
+
+- **order dependent**: fails after certain tests and fails again on replay. The
+  result names the test it **relies on** (state it needs another test to create)
+  or is **broken by** (state another test leaves behind), and the
+  `--shuffle=<seed>` command that reproduces it. Fix it by giving the test its
+  own setup (`beforeEach`, a fixture, its own data) and cleaning up in the test
+  that leaks; do not pin the file to serial mode.
+- **flaky regardless of order**: the failing order passed on replay: timing.
+- **fails in every order**: a real bug.
+
 Pass `separateProcesses: true` only when the flake seems tied to global setup or
 a cold start, since one process per run is slower. `get-failure` works on the
 last failing diagnose run straight after, and each repetition is recorded in the
@@ -158,9 +179,20 @@ pass/fail timeline.
   file it writes, then `run-test` it. Pass `write: false` to preview without
   writing.
 - **Set up CI:** when the user wants the same diagnosis on every pull request,
-  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.3.0`) or the
+  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.4.0`) or the
   `npx -y playwright-e2e-mcp ci` command in `references/setup.md`. It writes the
   run, flaky verdicts and fix diffs to the job summary and one PR comment.
+- **Accessibility:** `audit-accessibility` with `url` runs axe-core against
+  WCAG 2.2 A/AA (`standard` picks another level or `best-practice`). It takes
+  the same `storageState`, `headers` and `actions` as `inspect-page`, so audit
+  the signed-in pages and open dialogs, not only the landing page. Each
+  violation lists the offending elements as verified locators and the fix; fix
+  the worst (`critical`, `serious`) first, re-run the audit, then add the
+  `AxeBuilder` check it prints to the spec that reaches that page so it stays
+  fixed. Pass `minImpact: "serious"` for a short list.
+- **Write or review a test:** follow `references/writing-tests.md` (locators,
+  web-first assertions, auth setup, test data, network mocking, flake
+  patterns), with or without the server.
 - **Visual regression:** `compare-visual-state` with `url` and a `name`. The first
   call saves a baseline under `.pw-mcp/visual/`; later calls report changed
   regions and color shifts and write a diff image. Use `action: "baseline"` only
@@ -194,3 +226,5 @@ When you finish, tell the user, in this order:
 - `references/failure-kinds.md`: failure kinds and error codes, and what to do.
 - `references/example-session.md`: a worked fix-a-failing-test session with
   `suggest-fix`.
+- `references/writing-tests.md`: how to write Playwright tests that stay green,
+  and the review checklist.

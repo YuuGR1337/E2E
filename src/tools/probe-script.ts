@@ -13,6 +13,8 @@
  * - screenshot  capture the page or one element
  * - heal        rank elements that look like a broken locator's target, either
  *               on the live page or on a DOM snapshot taken from a trace
+ * - a11y        run axe-core on the page (or a scoped part) and describe the
+ *               offending elements, each with a verified locator
  *
  * Every element the script reports carries Playwright locators that were
  * proven, in this same page, to resolve to exactly that one element.
@@ -535,6 +537,54 @@ async function runActions(page, actions, timeout) {
         }
       }
       if (!data.parseError) await attachLocators(page, data.elements, 5, 3);
+    } else if (cfg.mode === 'a11y') {
+      // axe-core is evaluated in the page itself (not a script tag), so a
+      // Content-Security-Policy cannot block it.
+      await page.evaluate(require('node:fs').readFileSync(cfg.axeSourcePath, 'utf8'));
+      data = await page.evaluate(async (input) => {
+        const h = window.__pwmcp;
+        const options = { resultTypes: ['violations'] };
+        if (input.tags && input.tags.length) options.runOnly = { type: 'tag', values: input.tags };
+        let scope = document;
+        if (input.selector) {
+          scope = document.querySelector(input.selector);
+          if (!scope) return { matchCount: 0, elementCount: 0, elements: [], a11y: { violations: [], passes: 0, incomplete: 0, scopeMissing: true }, title: document.title };
+        }
+        const result = await window.axe.run(scope, options);
+        h.els = [];
+        const violations = result.violations.map((v) => ({
+          id: v.id,
+          impact: v.impact || 'minor',
+          help: v.help,
+          helpUrl: v.helpUrl,
+          tags: v.tags,
+          nodeCount: v.nodes.length,
+          nodes: v.nodes.slice(0, input.maxNodes).map((n) => {
+            const target = n.target && n.target.length === 1 && typeof n.target[0] === 'string' ? n.target[0] : undefined;
+            let element = -1;
+            if (target && h.els.length < 40) {
+              try {
+                const el = document.querySelector(target);
+                if (el) { element = h.els.length; h.els.push(el); }
+              } catch (err) { /* selector inside shadow DOM or an iframe */ }
+            }
+            return {
+              target: (n.target || []).map((t) => (Array.isArray(t) ? t.join(' >>> ') : String(t))).join(' | '),
+              html: String(n.html || '').slice(0, 200),
+              summary: String(n.failureSummary || '').slice(0, 400),
+              element: element,
+            };
+          }),
+        }));
+        return {
+          matchCount: violations.length,
+          elementCount: h.els.length,
+          elements: h.els.map((el) => h.describe(el)),
+          title: document.title,
+          a11y: { violations: violations, passes: result.passes.length, incomplete: result.incomplete.length },
+        };
+      }, { tags: cfg.axeTags || [], selector: cfg.selector, maxNodes: cfg.maxNodes || 3 });
+      await attachLocators(page, data.elements, 40, 2);
     } else if (cfg.mode === 'heal') {
       data = await page.evaluate((input) => {
         const h = window.__pwmcp;

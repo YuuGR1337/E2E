@@ -5,10 +5,11 @@ This skill only gives the agent instructions. The tools come from the
 
 ## Requirements
 
-- playwright-e2e-mcp **0.2.0 or newer**, 0.3.0 recommended. `suggest-fix`,
+- playwright-e2e-mcp **0.2.0 or newer**, 0.4.0 recommended. `suggest-fix`,
   `get-run-status`, `analyze-history`, verified locators and signed-in page
   inspection arrived in 0.2.0; per-test flaky verdicts, `isolate`, tool profiles
-  and the `ci` command in 0.3.0. Check with
+  and the `ci` command in 0.3.0; `audit-accessibility`, the `order` check
+  (needs Playwright 1.64+) and root-cause grouping in 0.4.0. Check with
   `npx -y playwright-e2e-mcp --version`.
 
 - Node.js 20 or newer.
@@ -80,6 +81,7 @@ Set these in the server's `env` block. None of them are secrets except
 | `PW_MCP_ALLOWED_ROOTS` | none | Extra directories allowed as `projectRoot` (`:`-separated, `;` on Windows) |
 | `PW_MCP_BLOCK_PRIVATE_URLS` | off for stdio | `1` makes the URL tools refuse loopback, private-network and cloud-metadata addresses |
 | `PW_MCP_STORAGE_STATE` | none | Default Playwright storageState JSON (inside the project) for the page tools, so signed-in pages open logged in |
+| `PW_MCP_SHUFFLE_SEEDS` | random | Seeds for `diagnose-flaky`'s `order` pass (comma separated), to replay reported orders |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `<project>/.playwright-e2e-mcp/history.jsonl` (this turns off `analyze-history`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` or `silent` |
 | `PW_MCP_HTTP_TOKEN` | none | HTTP bridge only: bearer token that unlocks all tools |
@@ -110,7 +112,7 @@ Exit code 0 means passed, 1 tests failed, 2 the run itself failed. On GitHub
 Actions it also writes to the job summary. As an Action:
 
 ```yaml
-- uses: xsignon-secure/E2E@v0.3.0
+- uses: xsignon-secure/E2E@v0.4.0
   with:
     flaky-runs: 3
     suggest: 2

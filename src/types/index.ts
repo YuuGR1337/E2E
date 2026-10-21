@@ -289,6 +289,11 @@ export interface RunTestOptions {
   lastFailed?: boolean;
   /** Playwright --repeat-each: run every selected test N times in one process. */
   repeatEach?: number;
+  /**
+   * Run in the order given by Playwright's `--shuffle=<seed>` (1.64+). With
+   * fullyParallel every test is its own group, so tests shuffle too.
+   */
+  shuffleSeed?: string;
   /** Playwright --fully-parallel: spread tests of one file across workers. */
   fullyParallel?: boolean;
   /**

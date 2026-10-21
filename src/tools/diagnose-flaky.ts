@@ -9,6 +9,9 @@
  * keeps only one result per test. `isolate` adds a second pass with one
  * worker so failures caused by parallelism (shared state, test-order
  * coupling, contention) are told apart from flakiness inside the test.
+ * `order` (Playwright 1.64+) runs the target files in several random orders
+ * with one worker and replays a failing order, which finds tests that pass
+ * or fail depending on what ran before them, and names the likely culprit.
  *
  * The verdict logic is pure functions (exported for unit tests).
  */
@@ -67,6 +70,10 @@ const diagnoseFlakyInput = z.object({
     .describe(
       'Also tell parallelism bugs from real flakiness: repeat in parallel (fully parallel, `workers` default 4), then repeat the failing tests with one worker',
     ),
+  order: z
+    .boolean()
+    .optional()
+    .describe('Also run the target files in `runs` random orders (Playwright 1.64+ --shuffle, one worker) to find tests that depend on what ran before them; returns the seed that reproduces it and the likely culprit test'),
   separateProcesses: z
     .boolean()
     .optional()
@@ -212,6 +219,126 @@ export function isolationReading(parallel: FlakySummary, isolated: FlakySummary 
   if (isolated.passed === 0) return 'FAILS EITHER WAY';
   return 'FLAKY ALONE TOO';
 }
+
+/* ------------------------------------------------------------------ */
+/* Test order (shuffle)                                                */
+/* ------------------------------------------------------------------ */
+
+/** True when this Playwright version has `--shuffle` (1.64+). */
+export function supportsShuffle(version: string | null | undefined): boolean {
+  const m = /^(\d+)\.(\d+)/.exec(version ?? '');
+  if (!m) return false;
+  const major = Number(m[1]);
+  return major > 1 || (major === 1 && Number(m[2]) >= 64);
+}
+
+/** One shuffled run: its seed and the attempts in execution order (one worker). */
+export interface OrderRun {
+  seed: string;
+  attempts: TestAttempt[];
+}
+
+export type OrderReading = 'ORDER DEPENDENT' | 'FLAKY IN ANY ORDER' | 'FAILS IN EVERY ORDER' | 'PASSES IN EVERY ORDER';
+
+export interface OrderFinding {
+  file: string;
+  line?: number;
+  title: string;
+  project?: string;
+  passedSeeds: string[];
+  failedSeeds: string[];
+  /** The failing seed replayed to confirm, and whether it failed again. */
+  replay?: { seed: string; failedAgain: boolean };
+  reading: OrderReading;
+  /** Tests that ran before this one in every failing order but after it in a passing one (they break it). */
+  suspects: string[];
+  /** Tests that ran before it in every passing order but after it in a failing one (it relies on them). */
+  reliesOn: string[];
+  headline?: string;
+}
+
+function attemptKey(a: Pick<TestAttempt, 'file' | 'title' | 'project'>): string {
+  return [a.file, a.title, a.project ?? ''].join('\u0000');
+}
+
+function attemptFailed(a: TestAttempt): boolean {
+  return a.status !== 'skipped' && a.status !== (a.expectedStatus ?? 'passed');
+}
+
+/**
+ * Read shuffled runs (plus replays of failing seeds) per test. Pure, so the
+ * verdicts are unit-tested without Playwright.
+ */
+export function analyzeOrder(runs: OrderRun[], replays: OrderRun[] = []): OrderFinding[] {
+  const findings = new Map<string, OrderFinding>();
+  const position = new Map<string, Map<string, number>>(); // seed → test → index
+  for (const run of runs) {
+    const order = new Map<string, number>();
+    run.attempts.forEach((a, i) => {
+      const key = attemptKey(a);
+      if (!order.has(key)) order.set(key, i);
+      if (a.status === 'skipped') return;
+      let f = findings.get(key);
+      if (!f) {
+        f = { file: a.file, line: a.line, title: a.title, project: a.project, passedSeeds: [], failedSeeds: [], reading: 'PASSES IN EVERY ORDER', suspects: [], reliesOn: [] };
+        findings.set(key, f);
+      }
+      if (attemptFailed(a)) {
+        if (!f.failedSeeds.includes(run.seed)) f.failedSeeds.push(run.seed);
+        f.headline ??= a.message;
+      } else if (!f.passedSeeds.includes(run.seed)) {
+        f.passedSeeds.push(run.seed);
+      }
+    });
+    position.set(run.seed, order);
+  }
+
+  const titleOf = new Map<string, string>();
+  for (const run of runs) for (const a of run.attempts) titleOf.set(attemptKey(a), a.title);
+
+  for (const [key, f] of findings) {
+    if (f.failedSeeds.length === 0) continue;
+    if (f.passedSeeds.length === 0) {
+      f.reading = 'FAILS IN EVERY ORDER';
+      continue;
+    }
+    const replay = replays.find((r) => f.failedSeeds.includes(r.seed) && r.attempts.some((a) => attemptKey(a) === key));
+    if (replay) {
+      const failedAgain = replay.attempts.some((a) => attemptKey(a) === key && attemptFailed(a));
+      f.replay = { seed: replay.seed, failedAgain };
+      f.reading = failedAgain ? 'ORDER DEPENDENT' : 'FLAKY IN ANY ORDER';
+    } else {
+      f.reading = 'ORDER DEPENDENT';
+    }
+    if (f.reading !== 'ORDER DEPENDENT') continue;
+    const before = (seed: string): Set<string> => {
+      const order = position.get(seed);
+      const mine = order?.get(key);
+      if (!order || mine === undefined) return new Set();
+      return new Set([...order.entries()].filter(([k, i]) => k !== key && i < mine).map(([k]) => k));
+    };
+    const ranBeforeIn = (seeds: string[]): Set<string> => {
+      let common: Set<string> | undefined;
+      for (const seed of seeds) {
+        const b = before(seed);
+        common = common ? new Set([...common].filter((k) => b.has(k))) : b;
+      }
+      return common ?? new Set();
+    };
+    const name = (k: string) => titleOf.get(k) ?? k;
+    f.suspects = [...ranBeforeIn(f.failedSeeds)].filter((k) => f.passedSeeds.some((seed) => !before(seed).has(k))).map(name).slice(0, 3);
+    f.reliesOn = [...ranBeforeIn(f.passedSeeds)].filter((k) => f.failedSeeds.some((seed) => !before(seed).has(k))).map(name).slice(0, 3);
+  }
+  return [...findings.values()];
+}
+
+const ORDER_TEXT: Record<OrderReading, string> = {
+  'ORDER DEPENDENT':
+    '🔗 **order dependent**: fails when certain tests run before it, and the failing order fails again on replay. It relies on (or is broken by) state another test leaves behind: data, storage, a logged-in session, server or module state. Give it its own setup in `beforeEach`, and clean up in the test that leaks.',
+  'FLAKY IN ANY ORDER': '⏱️ **flaky regardless of order**: the failing order passed on replay, so this is timing, not test order.',
+  'FAILS IN EVERY ORDER': '❌ **fails in every order**: not about order; a real bug.',
+  'PASSES IN EVERY ORDER': '✅ passed in every order.',
+};
 
 /* ------------------------------------------------------------------ */
 /* Rendering                                                           */
@@ -477,10 +604,103 @@ function modeLine(pass: PassResult, options: { runs: number; separateProcesses: 
   return `**Mode:** ${how}${workers}${parallel}; Playwright retries disabled (\`--retries=0\`, no auto-retry) so each run is honest evidence. Took ${formatDuration(pass.durationMs)}.`;
 }
 
+/**
+ * Run the target files in `runs` random orders with one worker, replay a
+ * failing order to rule out timing, and render what that shows.
+ */
+async function orderPass(options: {
+  root: string;
+  configPath?: string;
+  targets: string[];
+  runs: number;
+  args: DiagnoseFlakyInput;
+  ctx: ToolContext;
+  version: string | null | undefined;
+}): Promise<string[]> {
+  const { root, args, ctx } = options;
+  const lines = ['### Test order (`--shuffle`, one worker)', ''];
+  if (!supportsShuffle(options.version)) {
+    lines.push(`Skipped: random test order needs Playwright 1.64 or newer (this project has ${options.version ?? 'an unknown version'}).`, '');
+    return lines;
+  }
+  const files = [...new Set(options.targets.map((t) => t.replace(/:\d+(?::\d+)?$/, '')))];
+  const shown = files.map((f) => relativeToRoot(root, f));
+  const run = async (seed: string): Promise<OrderRun | undefined> => {
+    const result = await runTests({
+      projectRoot: root,
+      configPath: options.configPath,
+      testFiles: files,
+      browser: args.browser,
+      workers: 1,
+      fullyParallel: true,
+      shuffleSeed: seed,
+      timeoutMs: args.timeoutMs ?? 120_000,
+      retries: 0,
+      retryOnFailure: false,
+      collectAttempts: true,
+      signal: ctx.signal,
+    });
+    await recordRun(root, result, 'diagnose-flaky').catch(() => undefined);
+    if (isHardError(result) || !result.attempts?.length) return undefined;
+    return { seed, attempts: result.attempts };
+  };
+
+  // PW_MCP_SHUFFLE_SEEDS (comma separated) replays earlier orders, e.g. to
+  // re-check a fix against the exact seeds a diagnosis reported.
+  const fixedSeeds = (process.env.PW_MCP_SHUFFLE_SEEDS ?? '').split(',').map((v) => v.trim()).filter((v) => /^\d{1,15}$/.test(v));
+  const runs: OrderRun[] = [];
+  for (let i = 0; i < options.runs && !ctx.signal?.aborted; i += 1) {
+    const seed = fixedSeeds[i] ?? String(Math.floor(Math.random() * 1e9));
+    ctx.progress?.(i, options.runs, `test order: ${i} of ${options.runs} random order(s) done`);
+    const outcome = await run(seed);
+    if (!outcome) break;
+    runs.push(outcome);
+  }
+  if (runs.length === 0) {
+    lines.push('The shuffled runs did not report any tests (a run-level error); see the runs above.', '');
+    return lines;
+  }
+  let findings = analyzeOrder(runs);
+  const replaySeeds = [...new Set(findings.filter((f) => f.reading === 'ORDER DEPENDENT').map((f) => f.failedSeeds[0]))].slice(0, 2);
+  const replays: OrderRun[] = [];
+  for (const seed of replaySeeds) {
+    if (ctx.signal?.aborted) break;
+    const outcome = await run(seed);
+    if (outcome) replays.push(outcome);
+  }
+  if (replays.length > 0) findings = analyzeOrder(runs, replays);
+
+  const seeds = runs.map((r) => `\`${r.seed}\``).join(', ');
+  const failing = findings.filter((f) => f.failedSeeds.length > 0);
+  if (failing.length === 0) {
+    lines.push(`All ${findings.length} test(s) in ${shown.map((f) => `\`${f}\``).join(', ')} passed in ${runs.length} random orders (seeds ${seeds}): no order dependence.`, '');
+    return lines;
+  }
+  lines.push(`${runs.length} random orders of ${shown.map((f) => `\`${f}\``).join(', ')} (seeds ${seeds})${replays.length ? `, failing order replayed ${replays.length}×` : ''}:`, '');
+  lines.push('| test | orders passed | failing seed(s) | reading |', '| --- | --- | --- | --- |');
+  for (const f of failing) {
+    const total = f.passedSeeds.length + f.failedSeeds.length;
+    lines.push(
+      `| ${testLabel({ file: f.file, line: f.line, title: f.title, project: f.project, outcomes: [] })} | ${f.passedSeeds.length}/${total} | ${f.failedSeeds.map((s) => `\`${s}\``).join(', ')} | ${ORDER_TEXT[f.reading]} |`,
+    );
+  }
+  lines.push('');
+  for (const f of failing.filter((x) => x.reading === 'ORDER DEPENDENT')) {
+    const seed = f.replay?.seed ?? f.failedSeeds[0];
+    lines.push(`**${clipLines(f.title, 1, 80)}**`);
+    const names = (list: string[]) => list.map((t) => `\`${clipLines(t, 1, 80)}\``).join(', ');
+    if (f.suspects.length) lines.push(`- Broken by: ${names(f.suspects)} (ran before it in every failing order, after it in a passing one)`);
+    if (f.reliesOn.length) lines.push(`- Relies on: ${names(f.reliesOn)} (ran before it in every passing order, after it in a failing one)`);
+    if (f.headline) lines.push(`- Error: ${markdownCell(clipLines(f.headline, 1, 160))}`);
+    lines.push(`- Reproduce: \`npx playwright test ${shown.join(' ')} --workers=1 --fully-parallel --retries=0 --shuffle=${seed}\``, '');
+  }
+  return lines;
+}
+
 export const diagnoseFlakyTool = {
   name: 'diagnose-flaky',
   description:
-    'Repeat failing tests with retries disabled and return a per-test, evidence-based verdict: CONSISTENTLY FAILING (real bug), FLAKY (pass/fail counts, error-signature variance, duration spread) or NOT REPRODUCING. Runs all repetitions in one process by default. `isolate: true` also re-runs the failures with one worker to tell parallelism bugs (shared state) from flakiness inside the test. Defaults to the tests that failed in the most recent run.',
+    'Repeat failing tests with retries disabled and return a per-test, evidence-based verdict: CONSISTENTLY FAILING (real bug), FLAKY (pass/fail counts, error-signature variance, duration spread) or NOT REPRODUCING. Runs all repetitions in one process by default. `isolate: true` also re-runs the failures with one worker to tell parallelism bugs (shared state) from flakiness inside the test; `order: true` (Playwright 1.64+) runs the files in random orders to catch tests that depend on what ran before them. Defaults to the tests that failed in the most recent run.',
   inputSchema: diagnoseFlakySchema,
   handler: async (args: DiagnoseFlakyInput, ctx: ToolContext): Promise<ToolResponse> =>
     guard('diagnose-flaky', async () => {
@@ -635,6 +855,10 @@ export const diagnoseFlakyTool = {
           }
           lines.push('', `Isolated pass took ${formatDuration(alone.durationMs)}.`, '');
         }
+      }
+
+      if (args.order === true && !ctx.signal?.aborted) {
+        lines.push(...(await orderPass({ root, configPath, targets: sanitized, runs: runsRequested, args, ctx, version: detection.playwrightVersion })));
       }
 
       const worst = mainSummaries.reduce((a, b) => (VERDICT_RANK[b.summary.verdict] > VERDICT_RANK[a.summary.verdict] ? b : a));

@@ -592,6 +592,12 @@ export async function runTests(options: RunTestOptions): Promise<RunTestResult> 
   const repeatEach = clampInt(options.repeatEach, 1, 100);
   if (repeatEach !== undefined && repeatEach > 1) args.push(`--repeat-each=${repeatEach}`);
   if (options.fullyParallel) args.push('--fully-parallel');
+  if (options.shuffleSeed !== undefined) {
+    if (!/^\d{1,15}$/.test(options.shuffleSeed)) {
+      throw new PlaywrightMcpError(`Shuffle seed "${options.shuffleSeed}" must be digits`, 'INVALID_PATH');
+    }
+    args.push(`--shuffle=${options.shuffleSeed}`);
+  }
   const workers = clampInt(options.workers, 1, 64);
   if (workers !== undefined) args.push(`--workers=${workers}`);
   const retries = clampInt(options.retries, 0, 10);
