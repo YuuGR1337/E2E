@@ -55,6 +55,14 @@ run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ 
   (locators, waiting, auth, test data, mocking, flake patterns, review checklist).
 - **Ready in one line.** `npx -y playwright-e2e-mcp init` sets up Claude Code, Cursor and VS Code.
 
+### Free and open source, for good
+
+- **MIT licensed.** Use it, change it, ship it in commercial work; no fees, no paid tier, no feature held back.
+- **No account, no API key, no sign-up.** `npx -y playwright-e2e-mcp init` is the whole setup.
+- **No telemetry.** It never phones home; your tests, traces and run history stay on your machine.
+- **Free dependencies only:** the MCP SDK (Apache-2.0), zod (MIT), axe-core (MPL-2.0) and the Playwright your project already has (Apache-2.0).
+- **Free to host yourself**, too: the HTTP bridge deploys to a free Vercel account (see [Hosted endpoint](#hosted-endpoint-chatgpt--remote-clients)).
+
 <details>
 <summary><b>The technical details</b></summary>
 
@@ -619,11 +627,16 @@ serves every request with a fresh server instance, which is what a serverless
 function wants. `test/http-bridge.test.mjs` drives the real Node adapter over
 `node:http` so a broken bridge fails in CI, not in ChatGPT.
 
-**This deployment is token-protected.** `https://playwright-e2e-mcp.vercel.app`
-has `PW_MCP_HTTP_TOKEN` set, so a request without `Authorization: Bearer <token>`
-— including a ChatGPT connector created with authentication *None* — gets
-`401 {"error":"unauthorized"}`. Ask the operator for the token, or run your own
-bridge (below).
+**This demo deployment is token-protected.** `https://playwright-e2e-mcp.vercel.app`
+runs on the maintainer's account and has `PW_MCP_HTTP_TOKEN` set, so a request
+without `Authorization: Bearer <token>` (or an OAuth sign-in with it) gets
+`401 {"error":"unauthorized"}`. Nothing is held back: the same bridge is free to
+host yourself on a free Vercel account, with your own token:
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fxsignon-secure%2FE2E&env=PW_MCP_HTTP_TOKEN&envDescription=A%20random%20secret%20of%2016%2B%20characters%3B%20clients%20send%20it%20as%20a%20bearer%20token%20or%20type%20it%20to%20sign%20in&project-name=playwright-e2e-mcp)
+
+A serverless function has no browser, so for running and fixing your own tests
+the free local install (`npx -y playwright-e2e-mcp init`) is the better route.
 
 **Open vs. token-protected.** With `PW_MCP_HTTP_TOKEN` set (at least 16
 characters; use a random value) every tool is served to clients that send

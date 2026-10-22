@@ -32,7 +32,9 @@
     "gemini-cli-extension",
     "accessibility",
     "axe-core",
-    "wcag"
+    "wcag",
+    "open-source",
+    "free"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
