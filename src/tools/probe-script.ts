@@ -37,6 +37,12 @@ function send(payload) {
 
 function classifyError(message) {
   const m = String(message);
+  if (/Unknown device preset/.test(m)) {
+    return { kind: 'INVALID_PATH', hint: 'Use a name from Playwright\'s device list, e.g. "iPhone 15", "Pixel 7", "iPad Pro 11" or "Desktop Chrome".' };
+  }
+  if (/distribution '([^']+)' is not found|Chromium distribution/i.test(m)) {
+    return { kind: 'NO_PLAYWRIGHT', hint: 'That browser channel is not installed on this machine. Install it with: npx playwright install chrome (or msedge), or leave channel unset.' };
+  }
   if (/Executable doesn't exist|Please run the following command to install/i.test(m)) {
     return { kind: 'NO_PLAYWRIGHT', hint: 'Playwright browsers are not installed for this project. Run: npx playwright install chromium (or firefox / webkit for those engines)' };
   }
@@ -635,12 +641,26 @@ function summariseRequests(requests, timings, pageUrl) {
         launchOptions.args = ['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'];
       }
     }
+    if (cfg.channel) launchOptions.channel = cfg.channel;
     if (cfg.serverlessChromium) {
       launchOptions.executablePath = cfg.serverlessChromium.executablePath;
       launchOptions.args = cfg.serverlessChromium.args.concat(launchOptions.args || []);
     }
     browser = await pw[engine].launch(launchOptions);
-    const contextOptions = { viewport: cfg.viewport || { width: 1280, height: 720 } };
+    let contextOptions = { viewport: cfg.viewport || { width: 1280, height: 720 } };
+    if (cfg.device) {
+      const preset = pw.devices && pw.devices[cfg.device];
+      if (!preset) {
+        const wanted = cfg.device.toLowerCase();
+        const near = Object.keys(pw.devices || {}).filter((name) => name.toLowerCase().includes(wanted.split(' ')[0])).slice(0, 5);
+        throw new Error('Unknown device preset "' + cfg.device + '"' + (near.length ? '. Close matches: ' + near.join(', ') : ''));
+      }
+      // The engine stays the caller's choice; the preset brings viewport,
+      // user agent, scale and touch. Firefox has no mobile emulation.
+      const { defaultBrowserType: _engine, ...emulation } = preset;
+      if (engine === 'firefox') delete emulation.isMobile;
+      contextOptions = cfg.viewport ? { ...emulation, viewport: cfg.viewport } : emulation;
+    }
     if (cfg.mobile) Object.assign(contextOptions, { isMobile: true, hasTouch: true, deviceScaleFactor: 1.75 });
     if (cfg.storageState) contextOptions.storageState = cfg.storageState;
     if (cfg.headers) contextOptions.extraHTTPHeaders = cfg.headers;

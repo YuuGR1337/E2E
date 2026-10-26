@@ -233,7 +233,7 @@ Running and fixing your own tests needs your project, so use the local install f
 | MCP Registry | `io.github.xsignon-secure/E2E` ([listing](https://registry.modelcontextprotocol.io/)); registry-aware clients find it there |
 | Straight from GitHub, no npm | `npx -y github:xsignon-secure/E2E#v0.5.1` (pin a release tag) |
 | Release tarball | `npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.5.1/playwright-e2e-mcp-0.5.1.tgz` |
-| Docker | `docker run -i --rm -v "$PWD:/work" playwright-e2e-mcp` (see [Development](docs/development.md#docker)) |
+| Docker | `docker run -i --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp` (published on each release; see [Development](docs/development.md#docker)) |
 | Local checkout | `"command": "node", "args": ["/path/to/E2E/dist/index.js"]` |
 
 </details>

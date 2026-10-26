@@ -412,6 +412,11 @@ async function phaseLivePage(client, origin) {
   contains('inspect-page locator map offers the test id alternative', map.text, "getByTestId('cta-button')");
   contains('inspect-page DOM view carries locators too', inspect.text, "locator: `getByRole('button', { name: 'Buy now' })`");
 
+  const phone = await callTool(client, 'inspect-page', { url: origin, device: 'Pixel 7' }, 90_000);
+  contains('inspect-page with a device preset uses its viewport', phone.text, '412×839');
+  const badDevice = await callTool(client, 'inspect-page', { url: origin, device: 'Pixel 99' }, 90_000);
+  check('inspect-page names close matches for an unknown device', badDevice.isError && badDevice.text.includes('Close matches: Pixel'), badDevice.text.slice(0, 300));
+
   const loggedOut = await callTool(client, 'inspect-page', { url: `${origin}/account` }, 90_000);
   contains('inspect-page without a session lands on the login page', loggedOut.text, '"Sign in"');
   contains('inspect-page hints at storageState on a login page', loggedOut.text, 'Pass `storageState`');

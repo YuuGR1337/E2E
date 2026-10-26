@@ -41,6 +41,8 @@ out; results still carry the same fields.
 | `viewport` | object | `{ "width": 390, "height": 844 }` (default 1280×720) |
 | `har` | object | `{ "path": "tests/fixtures/cart.har", "mode"?: "replay" \| "record", "url"?: "**/api/**", "notFound"?: "abort" \| "fallback" }`. `replay` (default) answers matching requests from the file, `record` saves the page's traffic to it. The file and its folder must be inside the project. `routes` mocks still win over the HAR |
 | `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine (default `chromium`; the engine must be installed with `npx playwright install`). `audit-performance` is Chromium-only, and WebKit is refused while private addresses are blocked |
+| `device` | string | A Playwright device preset such as `iPhone 15`, `Pixel 7` or `iPad Pro 11`: its viewport, user agent, pixel ratio and touch. The engine stays `browser`'s (Firefox has no mobile emulation); `viewport` still overrides the size. An unknown name lists close matches |
+| `channel` | `chrome` \| `chrome-beta` \| `msedge` \| `msedge-beta` | Run the installed Google Chrome or Microsoft Edge instead of bundled Chromium (`npx playwright install chrome` or `msedge`). Chromium engine only; not on the hosted endpoint |
 
 Mocks make states that are hard to reach easy to inspect, audit or measure: the error
 banner after a 500, the empty list, the spinner of a slow API, the page without a
@@ -141,7 +143,7 @@ numbered next steps (re-run this single test by `file:line`, headed/debug mode,
 | `includeHtml` | boolean | Include the rendered HTML (capped) |
 | `maxHtmlChars` | number | HTML cap, default `20000` |
 | `timeoutMs` | number | Overall limit, default `45000` |
-| `storageState` / `headers` / `actions` / `routes` / `har` / `browser` / `viewport` | — | [Page state](#page-state-signed-in-pages-headers-and-steps) |
+| `storageState` / `headers` / `actions` / `routes` / `har` / `browser` / `device` / `channel` / `viewport` | — | [Page state](#page-state-signed-in-pages-headers-and-steps) |
 
 Each element comes with Playwright locators that were **checked on the page** to resolve to
 exactly that element, best first (role + accessible name, test id, label, placeholder, text,

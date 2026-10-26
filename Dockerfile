@@ -1,5 +1,9 @@
 # playwright-e2e-mcp over stdio, with Chromium ready for the URL tools.
 #
+#   docker run -i --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp
+#
+# or build it yourself:
+#
 #   docker build -t playwright-e2e-mcp .
 #   docker run -i --rm -v "$PWD:/work" playwright-e2e-mcp
 #
@@ -14,6 +18,9 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
+LABEL org.opencontainers.image.source="https://github.com/xsignon-secure/E2E" \
+      org.opencontainers.image.description="MCP server that runs, diagnoses and fixes failing Playwright tests" \
+      org.opencontainers.image.licenses="MIT"
 ENV NODE_ENV=production \
     PW_MCP_PROJECT_ROOT=/work \
     LOG_FORMAT=json

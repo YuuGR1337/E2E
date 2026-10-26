@@ -100,3 +100,16 @@ test('browser: firefox passes through, webkit is refused while private addresses
   }
   assert.equal((await resolvePageState({ browser: 'webkit' }, root, url, ctx)).browser, 'webkit');
 });
+
+test('device and channel: names are checked, a channel needs chromium', async () => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'pw-device-')));
+  const ctx = ctxFor(root);
+  const url = 'http://example.test/';
+  const mobile = await resolvePageState({ device: 'Pixel 7', channel: 'msedge' }, root, url, ctx);
+  assert.equal(mobile.device, 'Pixel 7');
+  assert.equal(mobile.channel, 'msedge');
+  assert.match(describePageState(mobile, root), /Pixel 7/);
+  assert.match(describePageState(mobile, root), /msedge/);
+  await assert.rejects(resolvePageState({ device: 'x"; process.exit(1)' }, root, url, ctx), /not a Playwright device name/);
+  await assert.rejects(resolvePageState({ browser: 'firefox', channel: 'chrome' }, root, url, ctx), /needs the chromium engine/);
+});

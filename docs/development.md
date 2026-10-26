@@ -253,12 +253,15 @@ pipeline in one shot.
 
 ## Docker
 
+Each release tag publishes the image to `ghcr.io/xsignon-secure/playwright-e2e-mcp`
+(tags `<version>` and `latest`, by `.github/workflows/publish-docker.yml`):
+
 ```bash
-docker build -t playwright-e2e-mcp .
-docker run -i --rm -v "$PWD:/work" playwright-e2e-mcp            # stdio MCP server
-docker run --rm -v "$PWD:/work" playwright-e2e-mcp ci            # CI report
+docker run -i --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp       # stdio MCP server
+docker run --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp ci       # CI report
+docker build -t playwright-e2e-mcp .                                               # or build it yourself
 ```
 
-The image is based on `mcr.microsoft.com/playwright:v1.63.0-noble`, so its
-browsers match Playwright 1.63. Mount your project at `/work`; its own
+The image is based on `mcr.microsoft.com/playwright:v1.64.1-noble`, so its
+browsers match Playwright 1.64. Mount your project at `/work`; its own
 `node_modules` provide `@playwright/test`.
