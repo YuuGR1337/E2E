@@ -134,7 +134,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (!cert || !key) {
       console.error(
         'sign-mcpb: a certificate and private key are required — pass --cert/--key or set MCPB_CERT/MCPB_KEY.\n' +
-          '           Keep the key outside the repository; see "Signing the bundle" in the README.',
+          '           Keep the key outside the repository; see "Signing the bundle" in docs/development.md.',
       );
       process.exit(1);
     }
