@@ -6,7 +6,7 @@
 src/
 ├── index.ts            # bin entry point (--version/--help, main-module guard)
 ├── server.ts           # McpServer setup, tool registration, shutdown handling
-├── tools/              # the fourteen tools, the probe script + shared plumbing
+├── tools/              # the sixteen tools, the probe script + shared plumbing
 ├── prompts.ts          # fix-failing-test, triage-flaky-tests
 ├── utils/              # playwright-runner, report-parser, project-detector, path-utils,
 │                       # logger, trace-reader (trace.zip → DOM/network/console),
@@ -56,7 +56,7 @@ server over stdio against a live fixture app and a Playwright project under
 `e2e/fixture/`, then drives it exactly like an MCP client and asserts ~40 behaviours
 that only appear end-to-end:
 
-- initialize handshake, 14 tools, 2 prompts, spec tool annotations and object input schemas,
+- initialize handshake, 16 tools, 2 prompts, spec tool annotations and object input schemas,
 - verified locators, locator validation, signed-in pages (`storageState`) and page steps,
 - background runs with progress, run history views, and `suggest-fix` healing a drifted
   locator and an ambiguous one, verifying each with a re-run (and refusing when the
@@ -253,12 +253,15 @@ pipeline in one shot.
 
 ## Docker
 
+Each release tag publishes the image to `ghcr.io/xsignon-secure/playwright-e2e-mcp`
+(tags `<version>` and `latest`, by `.github/workflows/publish-docker.yml`):
+
 ```bash
-docker build -t playwright-e2e-mcp .
-docker run -i --rm -v "$PWD:/work" playwright-e2e-mcp            # stdio MCP server
-docker run --rm -v "$PWD:/work" playwright-e2e-mcp ci            # CI report
+docker run -i --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp       # stdio MCP server
+docker run --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp ci       # CI report
+docker build -t playwright-e2e-mcp .                                               # or build it yourself
 ```
 
-The image is based on `mcr.microsoft.com/playwright:v1.63.0-noble`, so its
-browsers match Playwright 1.63. Mount your project at `/work`; its own
+The image is based on `mcr.microsoft.com/playwright:v1.64.1-noble`, so its
+browsers match Playwright 1.64. Mount your project at `/work`; its own
 `node_modules` provide `@playwright/test`.

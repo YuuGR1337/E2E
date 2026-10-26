@@ -148,6 +148,16 @@ re-runs the fix locally. If it says traces were not found, pass `traceDirs` with
 the folder where `test-results` was unpacked. The run is added to the history
 with its commit.
 
+## A test that used to pass
+
+When a test fails at HEAD but passed at some earlier commit, call
+`bisect-failure` (0.6.0+) `{ "test": "tests/cart.spec.ts", "grep": "adds an item" }`.
+It runs the test across git history in a temporary worktree (the checkout is not
+touched) and names the first bad commit with its diff summary. Pass `good` (a
+tag or `HEAD~30`) when the run history has no passing run of it; pass `repeat: 3`
+when the failure is intermittent. Read that commit's change before editing the
+test: the fix usually belongs in the app.
+
 ## Flaky or intermittent failures
 
 Start with `analyze-history` (default view `flaky`) to see which tests flip
@@ -164,6 +174,8 @@ one verdict **per test** (passes, failures, duration spread, first error):
   missing awaits, assertions without auto-waiting, shared state between tests and
   fixed `waitForTimeout` sleeps. Never "fix" flakiness by only adding retries or
   sleeps.
+  `audit-tests` (0.6.0+) finds these in the test code and names the ones in
+  tests that flaked; `fix: true` applies the mechanical rewrites and re-runs them.
 - **NOT REPRODUCING**: passed every run. Report that the failure was one-off.
 
 When a test is FLAKY and the suite runs in parallel, call `diagnose-flaky` again

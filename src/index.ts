@@ -41,6 +41,15 @@ async function main(): Promise<void> {
     process.exitCode = runInit(process.argv.slice(3));
     return;
   }
+  if (process.argv[2] === 'doctor') {
+    const { runDoctor, DOCTOR_USAGE } = await import('./cli/doctor.js');
+    if (process.argv.includes('--help') || process.argv.includes('-h')) {
+      process.stdout.write(DOCTOR_USAGE);
+      return;
+    }
+    process.exitCode = await runDoctor(process.argv.slice(3));
+    return;
+  }
   if (process.argv.includes('--version') || process.argv.includes('-v')) {
     process.stdout.write(`${SERVER_VERSION}\n`);
     return;
@@ -53,6 +62,7 @@ async function main(): Promise<void> {
         'Usage: playwright-e2e-mcp [--tools=<list>] [--version] [--help]',
         '       playwright-e2e-mcp ci [options]   run the suite and print a Markdown diagnosis (ci --help)',
         '       playwright-e2e-mcp init [options] add the server + agent skill to a project (init --help)',
+        '       playwright-e2e-mcp doctor         check Node, Playwright, browsers and client setup (doctor --help)',
         '',
         'Connects over stdio (MCP). Configuration via environment:',
         '  PW_MCP_PROJECT_ROOT        default project root (default: cwd)',

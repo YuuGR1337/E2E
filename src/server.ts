@@ -1,5 +1,5 @@
 /**
- * MCP server setup: creates the McpServer instance, registers the fourteen
+ * MCP server setup: creates the McpServer instance, registers the sixteen
  * tools (with spec tool annotations) and the workflow prompts, and wires
  * each invocation to a ToolContext (per-tool logger, abort signal, progress
  * reporter, shared store, default project root).
@@ -31,7 +31,10 @@ import { suggestFixTool } from './tools/suggest-fix.js';
 import { analyzeHistoryTool } from './tools/analyze-history.js';
 import { getRunStatusTool } from './tools/get-run-status.js';
 import { loadReportTool } from './tools/load-report.js';
+import { auditTestsTool } from './tools/audit-tests.js';
+import { bisectFailureTool } from './tools/bisect-failure.js';
 import { registerPrompts } from './prompts.js';
+import { outputSchemaFor } from './tools/structured.js';
 
 const require = createRequire(import.meta.url);
 
@@ -227,6 +230,32 @@ const TOOLS: ToolSpec[] = [
     },
     handler: analyzeHistoryTool.handler as ToolSpec['handler'],
   },
+  {
+    ...auditTestsTool,
+    title: 'Audit tests for flake risks',
+    // Reads spec files and the history; with fix it edits spec files and
+    // re-runs them (the project's test code), restoring them on failure.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    handler: auditTestsTool.handler as ToolSpec['handler'],
+  },
+  {
+    ...bisectFailureTool,
+    title: 'Find the commit that broke a test',
+    // Runs the project's test code at older commits in a temporary git
+    // worktree; the caller's checkout and files are not touched.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    handler: bisectFailureTool.handler as ToolSpec['handler'],
+  },
 ];
 
 export interface CreateServerOptions {
@@ -252,13 +281,13 @@ export const READ_ONLY_TOOLS: readonly string[] = ['list-tests', 'get-failure', 
 
 /**
  * Named tool sets for PW_MCP_TOOLS / --tools. Every tool definition costs
- * context on each request (all fourteen are ~9k tokens), so a client that
+ * context on each request (all sixteen are ~12k tokens), so a client that
  * only fixes failing suites can load the core loop alone.
  */
 export const TOOL_PROFILES: Readonly<Record<string, readonly string[]>> = {
   all: TOOLS.map((tool) => tool.name),
   core: ['run-test', 'get-run-status', 'get-failure', 'suggest-fix', 'diagnose-flaky', 'list-tests'],
-  triage: ['run-test', 'get-run-status', 'get-failure', 'load-report', 'diagnose-flaky', 'analyze-history', 'list-tests'],
+  triage: ['run-test', 'get-run-status', 'get-failure', 'load-report', 'diagnose-flaky', 'analyze-history', 'audit-tests', 'bisect-failure', 'list-tests'],
   inspect: ['inspect-page', 'validate-selector', 'compare-visual-state', 'audit-accessibility', 'audit-performance'],
   author: ['list-tests', 'inspect-page', 'validate-selector', 'generate-e2e-test', 'run-test'],
 };
@@ -334,6 +363,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
+        // Results always carry structuredContent; the schema that describes
+        // it costs context on every request, so PW_MCP_OUTPUT_SCHEMAS=0 drops it.
+        ...(process.env.PW_MCP_OUTPUT_SCHEMAS !== '0' && outputSchemaFor(tool.name) ? { outputSchema: outputSchemaFor(tool.name) } : {}),
         annotations: tool.annotations,
       },
       async (args: unknown, reqCtx: ServerContext) => {

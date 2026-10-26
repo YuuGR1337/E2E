@@ -709,7 +709,10 @@ export const diagnoseFlakyTool = {
 
       if (!detection.hasPlaywright) {
         const { message, hint } = missingPlaywrightMessage(detection);
-        return toolText([`## Flaky diagnosis unavailable`, '', `**Error:** ${message}`, '', `> ${hint}`].join('\n'));
+        return toolText([`## Flaky diagnosis unavailable`, '', `**Error:** ${message}`, '', `> ${hint}`].join('\n'), {
+          ok: false,
+          error: { kind: 'NO_PLAYWRIGHT', message, hint },
+        });
       }
 
       const configPath = resolveConfigSelection(detection, args.config);
@@ -813,6 +816,7 @@ export const diagnoseFlakyTool = {
           ]
             .filter(Boolean)
             .join('\n'),
+          { ok: false, verdict: 'NO TESTS RAN', error: { kind: kinds, message: last?.errorMessage ?? 'every attempt failed before any test ran' } },
         );
       }
 
@@ -872,6 +876,20 @@ export const diagnoseFlakyTool = {
         lines.push('');
       }
 
-      return toolText(lines.join('\n'));
+      return toolText(lines.join('\n'), {
+        ok: worst.summary.verdict === 'NOT REPRODUCING',
+        verdict: worst.summary.verdict,
+        tests: mainSummaries
+          .filter((entry) => entry.evidence)
+          .map(({ evidence, summary }) => ({
+            file: evidence!.file,
+            ...(evidence!.line !== undefined ? { line: evidence!.line } : {}),
+            title: evidence!.title,
+            ...(evidence!.project ? { project: evidence!.project } : {}),
+            verdict: summary.verdict,
+            passed: summary.passed,
+            failed: summary.failed,
+          })),
+      });
     }),
 };

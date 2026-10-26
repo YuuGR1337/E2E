@@ -11,6 +11,7 @@ import { runTests } from '../utils/playwright-runner.js';
 import { normalizePath, relativeToRoot } from '../utils/path-utils.js';
 import { recordRun } from '../utils/run-history.js';
 import { startBackgroundRun } from '../utils/run-registry.js';
+import { runData } from './structured.js';
 import {
   codeFence,
   clipLines,
@@ -276,6 +277,7 @@ export const runTestTool = {
             '',
             `> Next: call **get-run-status** with \`runId: "${run.id}"\` (add \`waitSeconds\` to wait for it). The result also becomes the last run for **get-failure** and **suggest-fix** when it finishes.`,
           ].join('\n'),
+          { runId: run.id, status: 'running' },
         );
       }
 
@@ -293,6 +295,6 @@ export const runTestTool = {
         durationMs: result.durationMs,
         failures: result.failures.length,
       });
-      return toolText(renderRunResult(result, root));
+      return toolText(renderRunResult(result, root), { ok: result.ok, run: runData(result) });
     }),
 };

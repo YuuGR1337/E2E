@@ -245,3 +245,35 @@ Reads `.playwright-e2e-mcp/history.jsonl`, written by every run
 passing runs and flags ones that got slower; `trend` shows failed and flaky
 executions per day; `commits` names, per failing or flaky test, the first bad
 commit after its last passing streak and the last good one.
+
+## audit-tests (0.6.0+)
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `testDir` / `filter` | string | Narrow the files |
+| `minSeverity` | `low` \| `medium` \| `high` | Default `low` |
+| `historyRuns` | number | Default 50 |
+| `limit` | number | Findings listed, default 50 |
+| `fix` | boolean | Rewrite mechanical findings, re-run touched files, revert on failure |
+| `verify` | boolean | Default true |
+
+Rules: `hard-wait`, `sleep`, `non-retrying-assertion`, `missing-await`,
+`focused-test` (high); `force-action`, `networkidle`, `element-handle`,
+`fragile-selector`, `no-timeout` (medium); `hardcoded-url`, `serial-mode` (low).
+Only `non-retrying-assertion`, `missing-await` and `focused-test` are fixed
+mechanically. Files rank by findings weighted by their flaky rate in the history.
+
+## bisect-failure (0.6.0+)
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `test` | string | Spec file (required) |
+| `grep` | string | Test title; better than `:line` across commits |
+| `good` / `bad` | string | Commits or refs; `good` defaults to the newest passing commit in the history, `bad` to HEAD |
+| `repeat` | number | Runs per commit (1–10) for intermittent failures |
+| `maxSteps` | number | Default 12 |
+| `stepTimeoutMs` | number | Default 180000 |
+
+Runs in a temporary git worktree with the current `node_modules` linked in;
+untestable commits are skipped. `status` is `found`, `ambiguous`, `max-steps`,
+`not-failing` (passes at bad) or `good-fails`.

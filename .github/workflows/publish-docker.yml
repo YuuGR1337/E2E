@@ -1,0 +1,60 @@
+name: Publish Docker image
+
+# A release tag also publishes the server as a container image:
+#
+#   docker run -i --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp
+#
+# The image is the repository's Dockerfile (Playwright's own base image, so
+# Chromium, Firefox and WebKit are ready). It is checked the same way CI checks
+# it, reporting the tag's version and answering an MCP handshake, before
+# anything is pushed. Only the GitHub token is used: no registry secret.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v0.6.0)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: build, check and push the image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    env:
+      IMAGE: ghcr.io/xsignon-secure/playwright-e2e-mcp
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - name: The tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$TAG"
+      - run: docker build -t "$IMAGE:${TAG#v}" -t "$IMAGE:latest" .
+      - name: The image reports the package version
+        run: test "$(docker run --rm "$IMAGE:${TAG#v}" --version)" = "${TAG#v}"
+      - name: The image answers initialize and tools/list over stdio
+        shell: bash
+        run: |
+          out=$(printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | timeout 60 docker run -i --rm -e LOG_LEVEL=warn "$IMAGE:${TAG#v}")
+          echo "$out" | grep -q '"name":"run-test"'
+      - name: Push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:${TAG#v}"
+          docker push "$IMAGE:latest"

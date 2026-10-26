@@ -33,6 +33,8 @@ const EXPECTED_TOOLS = [
   'analyze-history',
   'audit-accessibility',
   'audit-performance',
+  'audit-tests',
+  'bisect-failure',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',

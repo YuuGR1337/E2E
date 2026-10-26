@@ -39,6 +39,7 @@ import { childEnv, runProcess } from '../utils/playwright-runner.js';
 import { extractJsonFromText } from '../utils/report-parser.js';
 import { BLOCKED_RANGES, assertUrlAllowed, blockPrivateUrls } from '../utils/url-policy.js';
 import { serverlessChromium, serverlessChromiumEnabled } from '../utils/serverless-chromium.js';
+import type { StructuredResult } from './structured.js';
 
 /* ------------------------------------------------------------------ */
 /* State + responses                                                   */
@@ -56,8 +57,9 @@ export function createToolStore(): ToolStore {
   };
 }
 
-export function toolText(markdown: string): ToolResponse {
-  return { content: [{ type: 'text', text: markdown }] };
+/** A Markdown result, with structured fields beside it when the tool has them. */
+export function toolText(markdown: string, data?: Omit<StructuredResult, 'ok'> & { ok?: boolean }): ToolResponse {
+  return { content: [{ type: 'text', text: markdown }], structuredContent: { ok: true, ...data } };
 }
 
 export function toolError(
@@ -72,7 +74,11 @@ export function toolError(
   const lines = [`## ❌ ${kind}`, '', message];
   if (hint) lines.push('', '**How to fix:**', hint);
   if (details) lines.push('', '```text', details.trim(), '```');
-  return { content: [{ type: 'text', text: lines.join('\n') }], isError: true };
+  return {
+    content: [{ type: 'text', text: lines.join('\n') }],
+    structuredContent: { ok: false, error: { kind, message, ...(hint ? { hint } : {}) } },
+    isError: true,
+  };
 }
 
 /** Run a tool body, converting any thrown error into a tool response. */
@@ -372,6 +378,16 @@ export const pageStateShape = {
     })
     .optional(),
   browser: z.enum(['chromium', 'firefox', 'webkit']).optional().describe('Engine (default chromium)'),
+  device: z
+    .string()
+    .min(2)
+    .max(60)
+    .optional()
+    .describe("Playwright device preset, e.g. 'iPhone 15', 'Pixel 7', 'iPad Pro 11' (viewport, user agent, touch)"),
+  channel: z
+    .enum(['chrome', 'chrome-beta', 'msedge', 'msedge-beta'])
+    .optional()
+    .describe('Branded Chromium to launch instead of the bundled one (must be installed)'),
 };
 
 export interface PageStateInput {
@@ -382,7 +398,11 @@ export interface PageStateInput {
   viewport?: { width: number; height: number };
   har?: { path: string; mode?: 'replay' | 'record'; url?: string; notFound?: 'abort' | 'fallback' };
   browser?: BrowserEngine;
+  device?: string;
+  channel?: BrowserChannel;
 }
+
+export type BrowserChannel = 'chrome' | 'chrome-beta' | 'msedge' | 'msedge-beta';
 
 export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
 
@@ -406,6 +426,8 @@ export interface ResolvedPageState {
   viewport?: { width: number; height: number };
   har?: { path: string; mode: 'replay' | 'record'; url?: string; notFound: 'abort' | 'fallback' };
   browser?: BrowserEngine;
+  device?: string;
+  channel?: BrowserChannel;
 }
 
 /**
@@ -561,6 +583,28 @@ export async function resolvePageState(
     }
     out.browser = input.browser;
   }
+  if (input.device) {
+    // Checked against the project's own Playwright device list in the browser child.
+    if (!/^[\w .()+-]+$/.test(input.device)) {
+      throw new PlaywrightMcpError(`device "${input.device}" is not a Playwright device name`, 'INVALID_PATH', {
+        hint: "Use a name from Playwright's device list, e.g. 'iPhone 15' or 'Pixel 7'.",
+      });
+    }
+    out.device = input.device.trim();
+  }
+  if (input.channel) {
+    if ((input.browser ?? 'chromium') !== 'chromium') {
+      throw new PlaywrightMcpError(`channel ${input.channel} needs the chromium engine`, 'INVALID_PATH', {
+        hint: 'Leave browser unset (or chromium) when you pick a channel.',
+      });
+    }
+    if (serverlessChromiumEnabled()) {
+      throw new PlaywrightMcpError(`channel ${input.channel} is not available on the hosted endpoint`, 'INVALID_PATH', {
+        hint: 'The hosted endpoint bundles one Chromium build. Run the server locally to test in Chrome or Edge.',
+      });
+    }
+    out.channel = input.channel;
+  }
   if (input.routes && input.routes.length > 0) out.routes = resolveRouteMocks(input.routes);
   if (input.actions && input.actions.length > 0) {
     out.actions = [];
@@ -612,6 +656,8 @@ export function describePageState(state: ResolvedPageState, root: string): strin
     parts.push(state.har.mode === 'record' ? `recording HAR to ${file}` : `HAR replay from ${file}`);
   }
   if (state.browser) parts.push(state.browser);
+  if (state.channel) parts.push(state.channel);
+  if (state.device) parts.push(`device \`${state.device}\``);
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 

@@ -18,6 +18,7 @@ import {
   guard,
   toolText,
 } from './shared.js';
+import { failureData } from './structured.js';
 
 const getFailureInput = z.object({
   index: z
@@ -246,6 +247,7 @@ export const getFailureTool = {
           ]
             .filter(Boolean)
             .join('\n'),
+          { total: 0 },
         );
       }
 
@@ -285,6 +287,14 @@ export const getFailureTool = {
         );
       }
 
-      return toolText(parts.filter((part): part is string => part !== undefined).join('\n'));
+      return toolText(parts.filter((part): part is string => part !== undefined).join('\n'), {
+        failure: {
+          ...failureData(failure),
+          ...(failure.expected !== undefined ? { expected: failure.expected } : {}),
+          ...(failure.actual !== undefined ? { actual: failure.actual } : {}),
+        },
+        index,
+        total,
+      });
     }),
 };
