@@ -78,7 +78,7 @@ every run ──▶ analyze-history (flaky / broken / slow / which commit broke 
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - A project that uses `@playwright/test`, with a browser installed (`npx playwright install chromium`)
 - Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Codex, Gemini CLI or any other MCP client
 
@@ -248,7 +248,7 @@ Run my Playwright tests and fix whatever fails.
 Your agent should run the suite, read the failure, and propose a fix it has re-run. To check the
 setup without your own tests, ask it to run `examples/sample-test.spec.ts` from this repo.
 
-## What's new in 0.5.0
+## What's new in 0.5
 
 - **Diagnose CI failures:** `load-report` reads a CI job's report (or sharded blob reports)
   and its traces, so the same diagnosis and verified fixes work on failures from CI.
@@ -367,8 +367,11 @@ Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`,
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |
 | `PW_MCP_ALLOWED_ROOTS` | — | Extra directories a caller may pass as `projectRoot` (`:`-separated, `;` on Windows). Anything outside these and the default root is rejected |
-| `PW_MCP_HTTP_TOKEN` | — | HTTP bridge only: bearer token (16+ characters) that unlocks all tools (see [Hosted endpoint](docs/hosted-endpoint.md)) |
+| `PW_MCP_HTTP_TOKEN` | — | HTTP bridge only: bearer token that unlocks all tools: 16+ characters, 32+ recommended (see [Hosted endpoint](docs/hosted-endpoint.md)) |
 | `PW_MCP_ALLOWED_HOSTS` | localhost + Vercel hostnames when there is no token | HTTP bridge only: comma-separated `Host` allowlist; `*` accepts any |
+| `PW_MCP_MAX_FAILED_AUTH` | `20` | HTTP bridge only: wrong tokens or access keys one client address may send in 15 minutes before it gets `429` |
+| `PW_MCP_OAUTH_REDIRECT_HOSTS` | any https host | HTTP bridge only: comma-separated hosts OAuth apps may return to, e.g. `claude.ai,chatgpt.com`; `.example.com` covers subdomains; localhost always works |
+| `PW_MCP_TRUST_PROXY` | off (on for Vercel) | HTTP bridge only: `1` trusts `X-Real-IP` / `X-Forwarded-For` from a reverse proxy in front, so the sign-in limit counts per client, not per proxy |
 | `PW_MCP_PASSTHROUGH_ENV` | — | HTTP bridge only: comma-separated extra variables passed to test runs (e.g. `BASE_URL`) |
 | `PW_MCP_MAX_CHILDREN` | `4` | HTTP bridge only: how many test runs and browser probes may run at once |
 | `PW_MCP_BLOCK_PRIVATE_URLS` | off (on for the HTTP bridge) | `1` makes the URL tools refuse loopback, private-network and cloud-metadata addresses, including redirects and subresources |

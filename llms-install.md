@@ -6,7 +6,7 @@ order. Every step is safe to repeat.
 
 ## 1. Check the prerequisites
 
-- Node.js 20 or newer: `node --version`.
+- Node.js 22 or newer: `node --version`.
 - The project uses Playwright Test. If `@playwright/test` is not in `package.json`, ask the
   user before adding it (`npm install -D @playwright/test`).
 - A browser for Playwright: `npx playwright install chromium`.

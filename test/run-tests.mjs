@@ -6,6 +6,9 @@
  * and default cwd discovery would also pick up `dist/*-test.js`. This
  * launcher enumerates `*.test.mjs` itself and passes explicit file
  * paths, which works on every Node version and shell (cmd, sh, pwsh).
+ *
+ * `--coverage` adds Node's built-in coverage report for the compiled
+ * sources in dist/ (code run in child processes is not counted).
  */
 
 import { readdirSync } from 'node:fs';
@@ -24,5 +27,8 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });
+const coverage = process.argv.includes('--coverage')
+  ? ['--experimental-test-coverage', '--test-coverage-exclude=test/**', '--test-coverage-exclude=node_modules/**', '--test-coverage-exclude=e2e/**']
+  : [];
+const result = spawnSync(process.execPath, ['--test', ...coverage, ...files], { stdio: 'inherit' });
 process.exit(result.status ?? 1);

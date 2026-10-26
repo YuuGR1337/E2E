@@ -15,6 +15,8 @@
  */
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { clientAddress } from './utils/attempt-limiter.js';
+import type { AttemptLimiter } from './utils/attempt-limiter.js';
 
 /** Lifetimes, in seconds. */
 const CODE_TTL = 5 * 60;
@@ -39,6 +41,13 @@ export interface OAuthOptions {
   mcpPath: string;
   /** Clock in seconds; tests override it. */
   now?: () => number;
+  /** Counts wrong access keys typed on the authorize page, per client address. */
+  limiter?: AttemptLimiter;
+  /**
+   * Hostnames a registered app may send users back to (exact match, or
+   * `.example.com` for its subdomains). Empty allows any https host.
+   */
+  redirectHosts?: string[];
 }
 
 export interface OAuthServer {
@@ -98,6 +107,17 @@ export function isAllowedRedirectUri(value: unknown): value is string {
   return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
 }
 
+/** True when `value`'s host is in the allowlist (empty allows every host). */
+export function isAllowedRedirectHost(value: string, hosts: string[]): boolean {
+  if (hosts.length === 0) return true;
+  const host = new URL(value).hostname.toLowerCase();
+  if (['localhost', '127.0.0.1', '[::1]'].includes(host)) return true;
+  return hosts.some((allowed) => {
+    const entry = allowed.trim().toLowerCase();
+    return entry.startsWith('.') ? host.endsWith(entry) : host === entry;
+  });
+}
+
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -136,6 +156,8 @@ async function readParams(request: Request): Promise<URLSearchParams> {
 export function createOAuthServer(options: OAuthOptions): OAuthServer {
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const key = createHmac('sha256', options.token).update('playwright-e2e-mcp oauth v1').digest();
+  const redirectHosts = options.redirectHosts ?? [];
+  const redirectAllowed = (uri: unknown): uri is string => isAllowedRedirectUri(uri) && isAllowedRedirectHost(uri, redirectHosts);
 
   function sign(payload: Payload): string {
     const body = base64url(JSON.stringify(payload));
@@ -168,7 +190,7 @@ export function createOAuthServer(options: OAuthOptions): OAuthServer {
   function client(clientId: string | null): { redirectUris: string[]; name: string } | undefined {
     const payload = verify(clientId, 'client');
     if (!payload || !Array.isArray(payload.r)) return undefined;
-    return { redirectUris: payload.r.filter(isAllowedRedirectUri), name: typeof payload.n === 'string' ? payload.n : '' };
+    return { redirectUris: payload.r.filter(redirectAllowed), name: typeof payload.n === 'string' ? payload.n : '' };
   }
 
   function issueTokens(tag: string): Response {
@@ -218,6 +240,9 @@ export function createOAuthServer(options: OAuthOptions): OAuthServer {
     const uris = body.redirect_uris;
     if (!Array.isArray(uris) || uris.length === 0 || uris.length > MAX_REDIRECT_URIS || !uris.every(isAllowedRedirectUri)) {
       return oauthError(400, 'invalid_redirect_uri', 'redirect_uris must be https URLs, or http on localhost.');
+    }
+    if (!uris.every((uri) => isAllowedRedirectHost(uri, redirectHosts))) {
+      return oauthError(400, 'invalid_redirect_uri', 'This server only accepts apps that return to the hosts it allows.');
     }
     const name = typeof body.client_name === 'string' ? body.client_name.slice(0, 100) : '';
     const issuedAt = now();
@@ -289,11 +314,24 @@ export function createOAuthServer(options: OAuthOptions): OAuthServer {
       return redirectWith(redirectUri, withState({ error: 'invalid_request', error_description: 'PKCE with S256 is required.' }));
     }
 
+    const caller = clientAddress(request);
+    const wait = isPost ? (options.limiter?.retryAfter(caller) ?? 0) : 0;
+    if (wait > 0) {
+      const minutes = Math.ceil(wait / 60);
+      const response = page(
+        429,
+        'Too many attempts',
+        `<h1>Too many attempts</h1><p>Too many wrong access keys were entered. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.</p>`,
+      );
+      response.headers.set('retry-after', String(wait));
+      return response;
+    }
     const accessKey = isPost ? (params.get('access_key') ?? '') : '';
     if (isPost && accessKey && safeEqual(accessKey.trim(), options.token)) {
       const code = sign({ typ: 'code', c: clientTag(clientId), r: redirectUri, cc: challenge, exp: now() + CODE_TTL });
       return redirectWith(redirectUri, withState({ code, iss: originOf(request) }));
     }
+    if (isPost) options.limiter?.fail(caller);
 
     const hidden = ['client_id', 'redirect_uri', 'response_type', 'code_challenge', 'code_challenge_method', 'state', 'scope', 'resource']
       .map((name) => [name, name === 'redirect_uri' ? redirectUri : params.get(name)] as const)

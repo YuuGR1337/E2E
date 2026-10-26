@@ -1,6 +1,6 @@
 # playwright-e2e-mcp
 
-> MCP server that runs, diagnoses and fixes failing Playwright end-to-end tests: structured failures (file:line + kind), trace-based diagnosis (DOM, network, console at the failure), verified locator fixes that re-run and revert if still red, per-test flaky verdicts, CI report diagnosis, run history with the commit that broke each test, tests written by walking the flow on the live page, aria snapshots, accessibility and Web Vitals audits with network mocks and HAR replay, and a GitHub Action. Ships with an agent skill (SKILL.md). MIT, Node 20+, no API keys.
+> MCP server that runs, diagnoses and fixes failing Playwright end-to-end tests: structured failures (file:line + kind), trace-based diagnosis (DOM, network, console at the failure), verified locator fixes that re-run and revert if still red, per-test flaky verdicts, CI report diagnosis, run history with the commit that broke each test, tests written by walking the flow on the live page, aria snapshots, accessibility and Web Vitals audits with network mocks and HAR replay, and a GitHub Action. Ships with an agent skill (SKILL.md). MIT, Node 22+, no API keys.
 
 Install in one command from a project root: `npx -y playwright-e2e-mcp init` (merges the server into Claude Code, Cursor, VS Code, Gemini CLI and Codex project configs and installs the skill).
 

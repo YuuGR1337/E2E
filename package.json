@@ -60,6 +60,7 @@
     "prepare": "npm run build",
     "watch": "tsc -p tsconfig.json --watch",
     "test": "npm run build && node test/run-tests.mjs",
+    "coverage": "npm run build && node test/run-tests.mjs --coverage",
     "e2e": "npm run build && node e2e/run.mjs",
     "mcpb": "npm run build && node scripts/build-mcpb.mjs",
     "mcpb:smoke": "npm run mcpb && node scripts/mcpb-launch-sim.mjs && node scripts/mcpb-client-check.mjs",
@@ -73,16 +74,16 @@
     "prepublishOnly": "npm test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.3.1",
+    "@modelcontextprotocol/server": "^2.4.0",
     "axe-core": "^4.14.0",
     "zod": "^4.2.0"
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "^2.1.2",
-    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/client": "^2.4.0",
     "@playwright/test": "1.64.1",
     "@sparticuz/chromium": "153.0.0",
     "@types/node": "^26.6.5",

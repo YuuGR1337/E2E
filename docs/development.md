@@ -21,7 +21,8 @@ Zod v4 standard schemas; every tool declares spec tool annotations.
 ```bash
 npm install
 npm run build   # tsc → dist/ (zero errors)
-npm test        # build + test/run-tests.mjs (unit tests, any Node ≥20)
+npm test        # build + test/run-tests.mjs (unit tests, any Node ≥22)
+npm run coverage  # the same, with a line and branch coverage report
 npm run e2e     # build + e2e/run.mjs: live MCP ↔ Playwright integration suite
 npm run mcpb    # build + bundle dist/ into playwright-e2e-mcp-<version>.mcpb (+ .sha256)
 npm run mcpb:smoke   # ...then install that bundle in a temp dir, launch it and assert the handshake

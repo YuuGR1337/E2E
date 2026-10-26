@@ -14,12 +14,13 @@ Security problems go through [SECURITY.md](SECURITY.md), not public issues.
 
 ## Development setup
 
-Node.js 20 or newer.
+Node.js 22 or newer.
 
 ```bash
 npm install
 npx playwright install chromium
 npm test        # build + unit tests
+npm run coverage  # unit tests with a coverage report
 npm run e2e     # build + live MCP ↔ Playwright integration suite
 ```
 
