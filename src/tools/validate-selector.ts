@@ -17,6 +17,7 @@ import {
   bestLocator,
   clipLines,
   describePageState,
+  describeRouteHits,
   guard,
   loginHint,
   pageStateShape,
@@ -127,6 +128,8 @@ export const validateSelectorTool = {
       if (data.matchCount === 0) {
         lines.push(`## ✅ VALID — 0 matches`, '', `\`${selector}\` is a valid ${kind} but matched nothing on ${url}.`, '');
         if (stateLine) lines.push(`**Page state:** ${stateLine}`, '');
+        const mocks = describeRouteHits(state, data.routeHits);
+        if (mocks.length > 0) lines.push('**Network mocks:**', ...mocks, '');
         const login = loginHint(data.finalUrl, state);
         if (login) lines.push(`> 🔒 ${login}`, '');
         lines.push(
@@ -138,6 +141,8 @@ export const validateSelectorTool = {
       lines.push(`## ✅ VALID — ${data.matchCount} match${data.matchCount === 1 ? '' : 'es'}`, '');
       lines.push(`**URL:** ${url}${kind === 'locator' ? `  |  **Parsed as:** \`${formatLocator(chain)}\`` : ''}`);
       if (stateLine) lines.push(`**Page state:** ${stateLine}`);
+      const mocks = describeRouteHits(state, data.routeHits);
+      if (mocks.length > 0) lines.push('**Network mocks:**', ...mocks);
       lines.push('');
       const matches = data.elements;
       for (let i = 0; i < matches.length; i += 1) {

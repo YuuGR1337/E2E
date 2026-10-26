@@ -17,6 +17,7 @@ import {
   bestLocator,
   clipLines,
   describePageState,
+  describeRouteHits,
   guard,
   loginHint,
   pageStateShape,
@@ -106,7 +107,7 @@ function fixLine(summary: string): string {
 export function renderAudit(
   url: string,
   data: BrowserScriptData,
-  options: { minImpact?: (typeof IMPACT_ORDER)[number]; tags?: string[]; stateLine?: string; selector?: string },
+  options: { minImpact?: (typeof IMPACT_ORDER)[number]; tags?: string[]; stateLine?: string; selector?: string; routeLines?: string[] },
 ): string {
   const scan = data.a11y!;
   const floor = impactRank(options.minImpact ?? 'minor');
@@ -131,6 +132,7 @@ export function renderAudit(
   }
   lines.push(`**URL:** ${url}${options.selector ? `  |  **Scope:** \`${options.selector}\`` : ''}  |  **Rules:** ${standard}`);
   if (options.stateLine) lines.push(`**Page state:** ${options.stateLine}`);
+  if (options.routeLines?.length) lines.push('**Network mocks:**', ...options.routeLines);
   lines.push(`**Checked:** ${scan.passes} rules passed · ${scan.incomplete} need manual review${hidden ? ` · ${hidden} below ${options.minImpact} hidden` : ''}`, '');
 
   shown.forEach((v: AccessibilityViolation, i) => {
@@ -209,6 +211,7 @@ export const auditAccessibilityTool = {
         minImpact: args.minImpact,
         tags,
         stateLine: describePageState(state, root),
+        routeLines: describeRouteHits(state, outcome.data.routeHits),
         selector: args.selector,
       });
       const login = loginHint(outcome.data.finalUrl, state);

@@ -203,7 +203,9 @@ function walkSpec(spec: ReportSpec, prefix: string[], ctx: WalkContext): void {
   }
 
   for (const testCase of cases) {
-    const project = testCase.projectName;
+    // A config without named projects reports ""; treat it as no project,
+    // or re-running with --project= would be rejected.
+    const project = testCase.projectName || undefined;
     if (project) ctx.projectsSeen.add(project);
     const results = testCase.results ?? [];
     let outcome: WalkOutcome;

@@ -37,6 +37,7 @@ const COLORS = { blue: 'rgb(37, 99, 235)', red: 'rgb(220, 38, 38)' };
 const EXPECTED_TOOLS = [
   'analyze-history',
   'audit-accessibility',
+  'audit-performance',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',
@@ -140,6 +141,24 @@ function startFixtureServer() {
       if (req.method === 'GET' && req.url === '/login') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end('<!doctype html><title>Sign in</title><h1>Sign in</h1><label for="email">Email</label><input id="email"><button>Sign in</button>');
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/api/cart') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ items: ['Real item'] }));
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/cart') {
+        // Renders whatever /api/cart returns (items, an empty state or an
+        // error), after a long task and a late banner that shifts the list.
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(
+          '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cart</title></head><body><main><h1>Cart</h1><div id="slot"></div><ul id="cart"><li>Loading</li></ul><section style="height:300px">Recommended for you</section></main><script>' +
+            "setTimeout(()=>{const p=document.createElement('p');p.style.height='240px';p.textContent='Late promo';document.getElementById('slot').appendChild(p);},600);" +
+            "setTimeout(()=>{const t=Date.now();while(Date.now()-t<300){}},700);" +
+            "fetch('/api/cart').then(r=>{if(!r.ok)throw new Error(r.status);return r.json()}).then(d=>{document.getElementById('cart').innerHTML=d.items.length?d.items.map(i=>'<li>'+i+'</li>').join(''):'<li>Your cart is empty</li>'}).catch(()=>{document.getElementById('cart').innerHTML='<li role=\"alert\">Could not load cart</li>'});" +
+            '</script></body></html>',
+        );
         return;
       }
       if (req.method === 'GET' && req.url === '/a11y') {
@@ -428,6 +447,34 @@ async function phaseLivePage(client, origin) {
   );
   check('audit runs behind the login and after actions', !cleanAudit.isError && cleanAudit.text.includes('session `.auth/user.json`'), cleanAudit.text.slice(0, 600));
 
+  const perf = await callTool(client, 'audit-performance', { url: `${origin}/cart`, runs: 2 }, 120_000);
+  check('audit-performance reports Web Vitals', !perf.isError && perf.text.includes('| LCP · largest contentful paint |'), perf.text.slice(0, 600));
+  contains('audit-performance reports the median of runs', perf.text, '**Runs:** 2 (median)');
+  contains('audit-performance flags the late layout shift', perf.text, '**CLS ');
+  contains('audit-performance flags the long task', perf.text, '**TBT ');
+  contains('audit-performance lists requests', perf.text, '/api/cart');
+  contains('audit-performance hands back a budget check', perf.text, "test('stays within the performance budget'");
+  const budget = await callTool(client, 'audit-performance', { url: `${origin}/cart`, throttle: 'mobile', budgets: { cls: 0.01, requests: 50 } }, 120_000);
+  contains('audit-performance checks budgets', budget.text, 'performance budget exceeded (CLS)');
+  contains('audit-performance emulates a phone', budget.text, 'mobile, slow 4G, 4x CPU slowdown');
+
+  const failedApi = await callTool(
+    client,
+    'inspect-page',
+    { url: `${origin}/cart`, selector: '#cart li[role="alert"]', waitFor: '#cart li[role="alert"]', routes: [{ url: '**/api/cart', status: 500, body: 'boom' }, { url: '**/api/never', json: {} }] },
+    60_000,
+  );
+  contains('a mocked 500 renders the error state', failedApi.text, 'Could not load cart');
+  contains('mock hits are reported', failedApi.text, '`**/api/cart → 500`: matched 1 request');
+  contains('an unmatched mock is flagged', failedApi.text, '⚠️ `**/api/never → 200 JSON`: matched **no** request');
+  const emptyCart = await callTool(
+    client,
+    'validate-selector',
+    { url: `${origin}/cart`, selector: "getByText('Your cart is empty')", actions: [{ type: 'wait', locator: "getByText('Your cart is empty')" }], routes: [{ url: '**/api/cart', json: { items: [] } }] },
+    60_000,
+  );
+  contains('a mocked JSON body renders the empty state', emptyCart.text, '1 match');
+
   const escape = await callTool(client, 'inspect-page', { url: origin, storageState: '../../package.json' }, 30_000);
   check('storageState outside the project is refused', escape.isError && escape.text.includes('INVALID_PATH'), escape.text.slice(0, 300));
 
@@ -651,6 +698,27 @@ async function phaseHistoryAndHeal(client) {
   contains('suggest-fix apply verifies with a re-run', applied.text, '### ✅ Verified');
   contains('the spec now uses the healed locator', readFileSync(healPath, 'utf8'), "getByRole('button', { name: 'Buy now' })");
   rmSync(healPath, { force: true });
+
+  // A locator that now matches two elements: strict mode violation.
+  const strictPath = path.join(fixtureRoot, 'tests', 'strict.spec.ts');
+  writeFileSync(
+    strictPath,
+    [
+      "import { test } from '@playwright/test';",
+      '',
+      "test('saves the form', async ({ page }) => {",
+      "  await page.setContent('<button>Save</button><button>Save draft</button>');",
+      "  await page.getByRole('button', { name: 'Save' }).click({ timeout: 3000 });",
+      '});',
+      '',
+    ].join('\n'),
+  );
+  const strictRun = await callTool(client, 'run-test', { testFiles: ['tests/strict.spec.ts'], retryOnFailure: false }, 180_000);
+  contains('ambiguous locator fails with a strict mode violation', strictRun.text, 'strict mode violation');
+  const strictFix = await callTool(client, 'suggest-fix', { apply: true }, 180_000);
+  contains('suggest-fix picks the exact-name match', strictFix.text, "+  await page.getByRole('button', { name: 'Save', exact: true }).click({ timeout: 3000 });");
+  contains('suggest-fix verifies the strict-mode fix', strictFix.text, '### ✅ Verified');
+  rmSync(strictPath, { force: true });
 }
 
 async function phaseErrorPaths(client) {

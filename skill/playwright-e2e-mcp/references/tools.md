@@ -52,12 +52,13 @@ its selector, failed network requests, console errors and warnings, and next ste
 | `storageState` | string | Playwright storageState JSON inside the project (signed-in session); defaults to `PW_MCP_STORAGE_STATE` |
 | `headers` | object | Extra HTTP headers |
 | `actions` | array | Up to 20 steps after load: `{ type: click\|dblclick\|fill\|press\|check\|uncheck\|select\|hover\|wait\|goto, locator?, value?, url?, ms? }` |
+| `routes` | array | Up to 20 network mocks before load, first match wins: `{ url (glob), method?, status?, json? \| body?, contentType?, headers?, abort?, delayMs? }` (0.5.0+). The result reports hits per mock |
 | `viewport` | object | `{ width, height }` |
 
 Returns each element's Playwright locators proven unique on the page (role +
 name first), unique CSS selector, tag, visibility, box, text and attributes,
 plus console messages. `validate-selector` and `compare-visual-state` take the
-same `storageState`, `headers`, `actions` and `viewport`.
+same `storageState`, `headers`, `actions`, `routes` and `viewport`.
 
 ## validate-selector
 
@@ -141,13 +142,34 @@ Runs axe-core (0.4.0+) on a live page and returns WCAG violations, worst first.
 | `standard` | `wcag2a` \| `wcag2aa` \| `wcag21aa` \| `wcag22aa` \| `best-practice` \| `all` | Default `wcag22aa` (WCAG 2.0 to 2.2, A and AA) |
 | `minImpact` | `critical` \| `serious` \| `moderate` \| `minor` | Hide violations below this impact |
 | `selector` | string | Audit only this part of the page |
-| `storageState`, `headers`, `actions`, `viewport` | | As `inspect-page` |
+| `storageState`, `headers`, `actions`, `routes`, `viewport` | | As `inspect-page` |
 | `waitFor`, `waitUntil`, `timeoutMs` | | `waitUntil` default `load`; `timeoutMs` default 60000 |
 
 Each violation has its rule id, impact, WCAG criteria, a help link, up to three
 offending elements as verified locators with what to change, and the count of
 the rest. The result ends with an `@axe-core/playwright` check to paste into
 the spec.
+
+## audit-performance
+
+Measures lab Web Vitals (0.5.0+) in headless Chromium.
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `url` | string | Required |
+| `throttle` | `none` \| `mobile` | `mobile`: 412×823 touch viewport, 4x CPU slowdown, slow 4G (Lighthouse's mobile preset) |
+| `cpuSlowdown` | number | Override the CPU factor, 1 to 20 |
+| `runs` | number | 1 to 5 loads, median reported (default 1) |
+| `budgets` | object | `{ lcpMs, cls, inpMs, tbtMs, fcpMs, ttfbMs, transferKb, requests }`; turns the verdict into pass/fail |
+| `settleMs` | number | Observe this long after load (default 1500) |
+| `storageState`, `headers`, `actions`, `routes`, `viewport` | | As `inspect-page`; clicks and key presses in `actions` are measured as INP |
+| `waitFor`, `waitUntil`, `timeoutMs` | | `waitUntil` default `load`; `timeoutMs` per run, default 60000 |
+
+Returns a table of LCP, CLS, INP (only when `actions` ran), TBT, FCP and TTFB
+rated good / needs improvement / poor (or against the budgets), what to fix
+(the LCP element and the shifted elements as verified locators, long tasks,
+render-blocking requests), transfer size by type, the heaviest requests and
+third-party weight, and a Playwright test asserting LCP and CLS budgets.
 
 ## suggest-fix
 
@@ -157,8 +179,14 @@ the spec.
 | `apply` | boolean | Write the fix (default false: diff only) |
 | `verify` | boolean | After applying, re-run and revert if still failing (default true) |
 | `allowExpectationUpdate` | boolean | Allow applying a changed expected text (default false) |
+| `candidate` | number | Strict mode violation: which listed match the test meant (0.5.0+) |
 | `url`, `storageState`, `headers` | | Heal against a live page instead of the trace snapshot |
 | `config`, `timeoutMs` | | As `run-test` |
+
+For a strict mode violation (0.5.0+) it uses the unique locator Playwright
+printed for the intended match: the exact-name match with `high` confidence, or
+the `candidate` you pass with `medium`; with equal matches and no `candidate`
+it lists them and changes nothing.
 
 Returns a unified diff: a locator fix rated `high` or `medium` confidence, or an
 expectation update rated `low` that is applied only with

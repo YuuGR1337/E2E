@@ -1,6 +1,6 @@
 ---
 name: playwright-e2e-mcp
-description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results grouped by root cause, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism, test-order and timing bugs, signed-in page inspection, WCAG accessibility audits and local run history, plus a guide to writing tests that stay green. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a test is flaky or which tests are unstable, repair a selector that no longer matches, write or review a Playwright test, check a page for accessibility or visual regressions.
+description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results grouped by root cause, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism, test-order and timing bugs, signed-in page inspection with network mocks, WCAG accessibility audits, Web Vitals performance audits and local run history, plus a guide to writing tests that stay green. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a test is flaky or which tests are unstable, repair a selector that no longer matches, write or review a Playwright test, check a page for accessibility, performance or visual regressions.
 ---
 
 # Playwright E2E with playwright-e2e-mcp
@@ -18,14 +18,16 @@ newer. If `suggest-fix`, `get-run-status` or `analyze-history` is missing, the
 server is older than 0.2.0: use the steps that do not need those tools and tell
 the user to update it. `diagnose-flaky`'s per-test table and `isolate` option
 arrived in 0.3.0; `audit-accessibility`, `diagnose-flaky`'s `order` option and
-root-cause grouping in `run-test` arrived in 0.4.0.
+root-cause grouping in `run-test` arrived in 0.4.0; `audit-performance`, network
+mocks (`routes`) and strict-mode fixes in `suggest-fix` arrive in 0.5.0.
 
 ## Before you start
 
 1. Check that the server's tools are available. They are named `run-test`,
    `get-run-status`, `get-failure`, `suggest-fix`, `inspect-page`,
    `validate-selector`, `list-tests`, `generate-e2e-test`,
-   `compare-visual-state`, `audit-accessibility`, `diagnose-flaky` and
+   `compare-visual-state`, `audit-accessibility`, `audit-performance`,
+   `diagnose-flaky` and
    `analyze-history` (your client
    may prefix them, e.g. `mcp__playwright-e2e__run-test`).
 2. If they are all missing, stop and tell the user the MCP server is not
@@ -66,6 +68,11 @@ Follow these steps in order. Do not edit code before step 3.
    - `server-unreachable` / `SERVER_NOT_RUNNING`: the app is not running. Tell the
      user to start the dev server, or suggest `webServer` in the Playwright config.
      Do not edit tests.
+   - "strict mode violation … resolved to N elements": the locator matches more
+     than one element. Call `suggest-fix`; it picks the exact-name match itself,
+     or lists the matches so you can pass `candidate: <n>` for the one the test
+     meant (read the test's intent; ask the user if it is unclear). If the
+     duplicates should not exist (a dialog rendered twice), it is an app bug.
    - A locator or selector in the message, or "0 elements": call `suggest-fix`
      with the same `index`. If it returns a diff with `high` confidence, call it
      again with `apply: true`; it re-runs the test and reverts if still red. If it
@@ -110,6 +117,11 @@ fresh browser, so a signed-in page shows the login screen unless you pass state:
   or log credentials.
 - `actions`: up to 20 steps after load (`click`, `fill`, `press`, `check`,
   `select`, `hover`, `wait`, `goto`, ...) to open a modal or reach a later step.
+- `routes`: up to 20 network mocks applied before load, first match wins:
+  `{ "url": "**/api/cart", "json": { "items": [] } }` for an empty state,
+  `"status": 500` for an error state, `"abort": true` to drop a third party,
+  `"delayMs"` alone to slow the real request. The response flags a mock that
+  matched nothing; fix the glob before trusting the result.
 - `viewport`: `{ "width": 390, "height": 844 }` for mobile layouts.
 
 When a response says the page landed on a login screen, retry with
@@ -190,6 +202,14 @@ pass/fail timeline.
   the worst (`critical`, `serious`) first, re-run the audit, then add the
   `AxeBuilder` check it prints to the spec that reaches that page so it stays
   fixed. Pass `minImpact: "serious"` for a short list.
+- **Performance:** `audit-performance` with `url` measures LCP, CLS, TBT, FCP,
+  TTFB, and INP for the clicks and key presses in `actions`. Use
+  `throttle: "mobile"` for a phone on slow 4G and `runs: 3` before comparing
+  numbers, since one lab load is noisy. Pass `budgets` (e.g. `{ "lcpMs": 2500,
+  "cls": 0.1 }`) when the user has targets. Fix what it names (the LCP element,
+  the elements that shifted, long tasks, render-blocking and heavy requests),
+  re-measure with the same settings, then add the budget test it prints. Say
+  that these are lab numbers; field data can differ.
 - **Write or review a test:** follow `references/writing-tests.md` (locators,
   web-first assertions, auth setup, test data, network mocking, flake
   patterns), with or without the server.

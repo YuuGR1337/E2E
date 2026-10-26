@@ -16,6 +16,7 @@ import {
   bestLocator,
   clipLines,
   describePageState,
+  describeRouteHits,
   guard,
   loginHint,
   pageStateShape,
@@ -156,6 +157,8 @@ export const inspectPageTool = {
       );
       const stateLine = describePageState(state, root);
       if (stateLine) lines.push(`**Page state:** ${stateLine}`);
+      const mocks = describeRouteHits(state, data.routeHits);
+      if (mocks.length > 0) lines.push('**Network mocks:**', ...mocks);
       if (data.actionsDone?.length) lines.push(`**Steps run:** ${data.actionsDone.join('; ')}`);
       lines.push('');
       const login = loginHint(data.finalUrl, state);
