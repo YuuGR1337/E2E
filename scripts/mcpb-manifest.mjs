@@ -54,7 +54,7 @@ export function buildManifest(packageJson) {
       },
     },
     compatibility: {
-      runtimes: { node: '>=20' },
+      runtimes: { node: '>=22' },
       platforms: ['darwin', 'win32', 'linux'],
     },
   };

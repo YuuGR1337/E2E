@@ -12,7 +12,7 @@ This skill only gives the agent instructions. The tools come from the
   (needs Playwright 1.64+) and root-cause grouping in 0.4.0. Check with
   `npx -y playwright-e2e-mcp --version`.
 
-- Node.js 20 or newer.
+- Node.js 22 or newer.
 - A project with `@playwright/test` installed and a browser available:
   `npx playwright install chromium`.
 

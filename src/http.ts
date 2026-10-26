@@ -18,6 +18,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createMcpHandler, hostHeaderValidationResponse } from '@modelcontextprotocol/server';
 import type { McpHttpHandler } from '@modelcontextprotocol/server';
 import { createOAuthServer } from './oauth.js';
+import { clientAddress, createAttemptLimiter } from './utils/attempt-limiter.js';
 import { createServer, READ_ONLY_TOOLS } from './server.js';
 import { setMaxChildren, setScrubChildEnv } from './utils/playwright-runner.js';
 import { setBlockPrivateUrls } from './utils/url-policy.js';
@@ -48,10 +49,27 @@ export interface McpHttpHandlerOptions {
    * resource. Defaults to `/api/mcp`, where the Vercel function lives.
    */
   mcpPath?: string;
+  /**
+   * Wrong tokens or access keys one client may send in 15 minutes before it
+   * is refused with 429. Defaults to PW_MCP_MAX_FAILED_AUTH, else 20.
+   */
+  maxFailedAuth?: number;
+  /**
+   * Hosts OAuth apps may return users to. Defaults to
+   * PW_MCP_OAUTH_REDIRECT_HOSTS (comma separated; `.example.com` covers its
+   * subdomains). Empty allows any https host; localhost is always allowed.
+   */
+  redirectHosts?: string[];
 }
 
 /** Tokens shorter than this are refused: they can be guessed. */
 export const MIN_TOKEN_LENGTH = 16;
+
+/** Tokens shorter than this still work, with a warning to use a longer one. */
+export const RECOMMENDED_TOKEN_LENGTH = 32;
+
+/** Window for counting failed sign-ins, in seconds. */
+const FAILED_AUTH_WINDOW = 15 * 60;
 
 /** Default Host allowlist for an open (token-less) bridge. */
 function defaultAllowedHosts(): string[] {
@@ -76,10 +94,10 @@ function tokenMatches(header: string | null, token: string): boolean {
   return timingSafeEqual(digest(match[1].trim()), digest(token));
 }
 
-/** PW_MCP_MAX_CHILDREN as a positive integer; anything else means the default of 4. */
-function maxChildrenFromEnv(): number {
-  const value = Number(process.env.PW_MCP_MAX_CHILDREN ?? '');
-  return Number.isInteger(value) && value > 0 ? value : 4;
+/** A positive integer from the environment, or the fallback. */
+function positiveIntFromEnv(value: string | undefined, fallback: number): number {
+  const parsed = Number(value ?? '');
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
@@ -104,14 +122,27 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions = {}): McpHt
   // Children spawned on behalf of HTTP callers must not see deployment
   // secrets, and URL tools must not reach the deployment's private network.
   setScrubChildEnv(true);
-  setMaxChildren(maxChildrenFromEnv());
+  setMaxChildren(positiveIntFromEnv(process.env.PW_MCP_MAX_CHILDREN, 4));
   setBlockPrivateUrls(true);
   if (!token) {
     logger.warn('PW_MCP_HTTP_TOKEN is not set; serving read-only tools only', { tools: READ_ONLY_TOOLS });
+  } else if (token.length < RECOMMENDED_TOKEN_LENGTH) {
+    logger.warn(`PW_MCP_HTTP_TOKEN is shorter than ${RECOMMENDED_TOKEN_LENGTH} characters; use a longer random value`);
   }
+  const limiter = createAttemptLimiter({
+    max: options.maxFailedAuth ?? positiveIntFromEnv(process.env.PW_MCP_MAX_FAILED_AUTH, 20),
+    windowSeconds: FAILED_AUTH_WINDOW,
+  });
   // With a token, OAuth clients (claude.ai connectors) sign in by typing it
   // on the authorize page; without one the endpoint is open and needs none.
-  const oauth = token ? createOAuthServer({ token, mcpPath: options.mcpPath ?? '/api/mcp' }) : undefined;
+  const oauth = token
+    ? createOAuthServer({
+        token,
+        mcpPath: options.mcpPath ?? '/api/mcp',
+        limiter,
+        redirectHosts: options.redirectHosts ?? envList(process.env.PW_MCP_OAUTH_REDIRECT_HOSTS),
+      })
+    : undefined;
   const inner = createMcpHandler(
     (context) =>
       createServer({
@@ -134,8 +165,15 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions = {}): McpHt
       if (oauth) {
         const oauthResponse = await oauth.handle(request);
         if (oauthResponse) return oauthResponse;
+        const caller = clientAddress(request);
+        const wait = limiter.retryAfter(caller);
+        if (wait > 0) {
+          return jsonResponse(429, { error: 'too many failed sign-ins; try again later' }, { 'retry-after': String(wait) });
+        }
         const authorization = request.headers.get('authorization');
         if (!tokenMatches(authorization, token) && !oauth.verifyAccessToken(authorization)) {
+          // A request with no credentials is a client discovering OAuth, not a guess.
+          if (authorization) limiter.fail(caller);
           return jsonResponse(401, { error: 'unauthorized' }, { 'www-authenticate': oauth.challenge(request) });
         }
       }
@@ -191,7 +229,15 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 function buildRequest(req: IncomingMessage, method: string, body: Buffer | undefined, signal: AbortSignal): Request {
   const protocol = (firstHeader(req.headers['x-forwarded-proto']) ?? 'http').split(',')[0].trim();
   const host = firstHeader(req.headers.host) ?? 'localhost';
-  const init: RequestInit = { method, headers: toHeaders(req.headers), signal };
+  const headers = toHeaders(req.headers);
+  // Vercel sets x-real-ip itself, and PW_MCP_TRUST_PROXY=1 says a reverse
+  // proxy in front does. Otherwise a caller could forge it, so the socket's
+  // address replaces it before the sign-in limiter reads it.
+  if (!process.env.VERCEL && process.env.PW_MCP_TRUST_PROXY !== '1') {
+    headers.delete('x-forwarded-for');
+    headers.set('x-real-ip', req.socket?.remoteAddress ?? 'unknown');
+  }
+  const init: RequestInit = { method, headers, signal };
   if (body && body.byteLength > 0) init.body = body;
   return new Request(`${protocol}://${host}${req.url ?? '/'}`, init);
 }

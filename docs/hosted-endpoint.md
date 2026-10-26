@@ -31,7 +31,8 @@ URLs. Running and fixing your own tests needs your project next to the server, s
 free local install (`npx -y playwright-e2e-mcp init`) is the route.
 
 **Open vs. token-protected.** With `PW_MCP_HTTP_TOKEN` set (at least 16
-characters; use a random value) every tool is served to clients that send
+characters, 32 or more recommended; use a random value such as
+`openssl rand -base64 32`) every tool is served to clients that send
 `Authorization: Bearer <token>`, and every other request gets `401`. Without that
 variable anyone who reaches the URL can call the bridge, so it degrades to
 `list-tests`, `get-failure` and `analyze-history` in restricted mode: `list-tests` scans sources
@@ -60,7 +61,19 @@ state: client ids, codes and tokens are signed with a key derived from
 `PW_MCP_HTTP_TOKEN`, access tokens last an hour and refresh tokens 30 days, and
 changing `PW_MCP_HTTP_TOKEN` signs every connected client out. The sign-in page
 shows which site will receive access, so only type the key when that is the
-app you are connecting. Source: [`src/oauth.ts`](../src/oauth.ts); the
+app you are connecting.
+
+**Limits on guessing.** After 20 wrong tokens or access keys from one address
+within 15 minutes (`PW_MCP_MAX_FAILED_AUTH`), that address gets `429` until the
+oldest failure is 15 minutes old. Each warm serverless instance counts on its
+own, so for a public deployment also add a rate-limit rule for `/oauth/authorize`
+and `/api/mcp` in the Vercel Firewall. To accept only known apps, set
+`PW_MCP_OAUTH_REDIRECT_HOSTS` (for example `claude.ai,chatgpt.com`); registration
+then refuses any app that returns users elsewhere.
+
+**Signing clients out.** Sign-ins carry no server-side state, so one client
+cannot be signed out on its own: changing `PW_MCP_HTTP_TOKEN` signs out every
+client, and each signs in again with the new key. Source: [`src/oauth.ts`](../src/oauth.ts); the
 `/.well-known/oauth-*` and `/oauth/*` paths reach the function through the
 rewrites in [`vercel.json`](../vercel.json).
 

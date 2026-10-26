@@ -43,7 +43,9 @@ issues in Playwright or the MCP SDK themselves (report those upstream).
   locale, `CI`, `PLAYWRIGHT_*`, `npm_config_*` without embedded credentials, plus
   anything in `PW_MCP_PASSTHROUGH_ENV`), at most `PW_MCP_MAX_CHILDREN` run at once
   (a disconnected client frees its slot immediately), and internal error messages
-  are not returned to clients. The allowlist only covers the child's own
+  are not returned to clients. Wrong tokens and access keys are limited per client
+  address (`PW_MCP_MAX_FAILED_AUTH`, 20 per 15 minutes), and
+  `PW_MCP_OAUTH_REDIRECT_HOSTS` can restrict which apps may register. The allowlist only covers the child's own
   environment: test code runs as the same OS user, so on Linux it could still read
   the server's startup environment from `/proc`. That is why only token holders
   can run project code; keep other secrets out of the bridge's environment, or run
