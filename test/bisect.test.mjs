@@ -71,9 +71,12 @@ function gitAvailable() {
 }
 
 test('bisect-failure finds the commit that broke a real test, in a worktree', { skip: !gitAvailable() && 'git not installed', timeout: 180_000 }, async () => {
-  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'pw-bisect-test-')));
-  const git = (...args) => execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8' }).trim();
+  // The project sits in a subfolder of the repository, as in a monorepo.
+  const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'pw-bisect-test-')));
+  const root = path.join(repo, 'app');
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' }).trim();
   try {
+    mkdirSync(root);
     symlinkSync(path.join(repoRoot, 'node_modules'), path.join(root, 'node_modules'), 'junction');
     writeFileSync(path.join(root, '.gitignore'), 'node_modules\ntest-results\n.playwright-e2e-mcp\n');
     writeFileSync(path.join(root, 'package.json'), '{ "name": "bisect-fixture", "private": true }\n');
@@ -118,7 +121,7 @@ test('bisect-failure finds the commit that broke a real test, in a worktree', { 
     const passing = await bisectFailureTool.handler({ test: 'tests/price.spec.ts', good, bad: good }, ctx);
     assert.match(passing.content[0].text, /same commit/);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
   }
-  assert.ok(!existsSync(root));
+  assert.ok(!existsSync(repo));
 });

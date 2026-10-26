@@ -7,7 +7,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -117,8 +117,11 @@ export const bisectFailureTool = {
           hint: 'bisect-failure searches git history; initialise or clone the repository first.',
         });
       }
-      const repoTop = normalizePath(realpathSync(top.stdout));
-      const subdir = path.posix.relative(repoTop, normalizePath(realpathSync(toNativePath(root))));
+      const repoTop = toNativePath(top.stdout);
+      // Ask git for the project's place in the repository: comparing paths
+      // breaks on Windows, where git and Node can spell the same folder
+      // differently (8.3 short names, drive letter case).
+      const subdir = (await git(['rev-parse', '--show-prefix'], root)).stdout.replace(/\/+$/, '');
       const testArg = sanitizeTestPathArgument(args.test, root);
       const lineMatch = /:(\d+)$/.exec(testArg);
       const testRel = relativeToRoot(root, lineMatch ? testArg.slice(0, -lineMatch[0].length) : testArg);
