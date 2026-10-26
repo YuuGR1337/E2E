@@ -34,7 +34,7 @@ free local install (`npx -y playwright-e2e-mcp init`) is the route.
 characters; use a random value) every tool is served to clients that send
 `Authorization: Bearer <token>`, and every other request gets `401`. Without that
 variable anyone who reaches the URL can call the bridge, so it degrades to
-`list-tests` and `get-failure` in restricted mode: `list-tests` scans sources
+`list-tests`, `get-failure` and `analyze-history` in restricted mode: `list-tests` scans sources
 instead of running `playwright test --list` (which would execute the project's
 config), callers cannot pick another `projectRoot`, and nothing spawns a process,
 drives a browser or writes a file. Child processes started over HTTP get only an
@@ -82,7 +82,7 @@ codex mcp add playwright-e2e-remote --url https://playwright-e2e-mcp.vercel.app/
 | Works on the hosted endpoint | Needs the local install |
 | --- | --- |
 | `inspect-page`, `validate-selector`, `audit-accessibility`, `audit-performance` on public URLs (Chromium only; private and loopback addresses are refused) | `run-test`, `diagnose-flaky`, `suggest-fix`, `generate-e2e-test` and `load-report` need your project; `compare-visual-state` needs somewhere to keep baselines |
-| `list-tests` and `get-failure` (also without a token) | Firefox and WebKit, and pages on `localhost` or your private network |
+| `list-tests` and `get-failure` (a self-hosted bridge without a token serves these and `analyze-history`) | Firefox and WebKit, and pages on `localhost` or your private network |
 
 The browser is [`@sparticuz/chromium`](https://github.com/Sparticuz/chromium), a Chromium
 build for serverless functions, driven by the bundled `playwright-core`. The first call on a
