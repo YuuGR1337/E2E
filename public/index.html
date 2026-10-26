@@ -23,7 +23,7 @@
   <body>
     <main>
       <h1>playwright-e2e-mcp</h1>
-      <p class="sub">The diagnosis layer for AI test-fixing: run your Playwright suite, get classified failures with the DOM at failure, verified fixes and cross-run flakiness.</p>
+      <p class="sub">The test doctor for AI agents: run your Playwright suite, diagnose failures from the trace, apply fixes proven by a re-run, and audit pages for accessibility and speed.</p>
 
       <p><span class="ok">●</span> Endpoint is live:</p>
       <pre>https://playwright-e2e-mcp.vercel.app/api/mcp</pre>
@@ -55,11 +55,12 @@
         connector, leave the OAuth fields empty, and type the access key on the sign-in page that opens.
       </p>
       <p>
-        <strong>What it can and cannot do:</strong> this endpoint runs in a cloud function with no browser, so it
-        can list the bundled example specs but cannot run tests or open pages, and it cannot see your
-        repository or your <code>localhost</code>. To run, diagnose and fix your own tests, or to inspect and
-        audit pages, run the server next to your code: <code>npx -y playwright-e2e-mcp init</code> (see the
-        README for one-line installs).
+        <strong>What it can and cannot do:</strong> this endpoint runs in a cloud function with a bundled
+        Chromium, so with the token <code>inspect-page</code>, <code>validate-selector</code>,
+        <code>audit-accessibility</code> and <code>audit-performance</code> work on any public URL. It cannot see
+        your repository or your <code>localhost</code>, so it cannot run your own tests, and it does not open
+        Firefox, WebKit or private-network pages. To run, diagnose and fix your own tests, run the server next
+        to your code: <code>npx -y playwright-e2e-mcp init</code> (see the README for one-line installs).
       </p>
     </main>
   </body>
