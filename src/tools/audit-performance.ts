@@ -458,6 +458,18 @@ export const auditPerformanceTool = {
       });
       const login = loginHint(data.finalUrl, state);
       if (login) text += `\n\n> 🔒 ${login}`;
-      return toolText(text);
+      const rows = metricRows(data.perf!, args.budgets);
+      return toolText(text, {
+        ok: !rows.some((row) => row.overBudget || row.rating === 'poor'),
+        url,
+        metrics: rows.map((row) => ({
+          id: row.spec.id,
+          ...(row.value !== undefined ? { value: row.value } : {}),
+          unit: row.spec.unit,
+          ...(row.rating ? { rating: row.rating } : {}),
+          ...(row.budget !== undefined ? { budget: row.budget } : {}),
+          overBudget: row.overBudget,
+        })),
+      });
     }),
 };

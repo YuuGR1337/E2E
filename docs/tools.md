@@ -5,6 +5,27 @@
 Every argument of the fourteen tools, with example output. The short list is in the
 [README](../README.md#tools).
 
+## Structured results
+
+Every result carries a JSON object (`structuredContent`) next to the Markdown, so an
+agent or app can read verdicts, counts and `file:line` positions without parsing text.
+All of them have `ok` (`false` when the call failed or the tests it ran failed) and,
+on a failed call, `error: { kind, message, hint }`. These tools add their own fields,
+described by each tool's `outputSchema`:
+
+| Tool | Fields |
+| --- | --- |
+| `run-test`, `get-run-status` | `run`: `passed`, `failed`, `flaky`, `skipped`, `durationMs`, `exitCode`, `partial`, `failures[]` (`file`, `line`, `title`, `project`, `kind`, `message`, `tracePath`); `runId` and `status` for background runs |
+| `get-failure` | `failure` (as above, plus `expected` and `actual`), `index`, `total` |
+| `list-tests` | `tests[]` (`file`, `line`, `title`, `project`), `total`, `truncated` |
+| `diagnose-flaky` | `verdict` (the worst one), `tests[]` with `verdict`, `passed`, `failed` per test |
+| `suggest-fix` | `fix` (`file`, `line`, `before`, `after`, `kind`, `confidence`, `why`, `alternatives`), `applied`, `verified` |
+| `audit-accessibility` | `url`, `violations[]` (`id`, `impact`, `help`, `helpUrl`, `count`) |
+| `audit-performance` | `url`, `metrics[]` (`id`, `value`, `unit`, `rating`, `budget`, `overBudget`) |
+
+The schemas add about 2k tokens to the tool list. `PW_MCP_OUTPUT_SCHEMAS=0` leaves them
+out; results still carry the same fields.
+
 ## Page state: signed-in pages, headers and steps
 
 `inspect-page`, `validate-selector`, `compare-visual-state`, `audit-accessibility` and

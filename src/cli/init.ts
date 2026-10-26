@@ -226,6 +226,7 @@ export function runInit(argv: string[], out: (line: string) => void = (l) => pro
   }
   out('');
   out('Next: make sure browsers are installed (npx playwright install chromium), then');
-  out('restart or reload the agent so it picks up the new server.');
+  out('restart or reload the agent so it picks up the new server. Check the setup any');
+  out('time with: npx -y playwright-e2e-mcp doctor');
   return changes.some((c) => c.action === 'error') ? 1 : 0;
 }

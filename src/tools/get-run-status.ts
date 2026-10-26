@@ -10,6 +10,7 @@ import type { ToolContext, ToolResponse } from '../types/index.js';
 import { getBackgroundRun, listBackgroundRuns } from '../utils/run-registry.js';
 import type { BackgroundRun } from '../utils/run-registry.js';
 import { formatDuration, guard, toolText } from './shared.js';
+import { runData } from './structured.js';
 import { renderRunResult } from './run-test.js';
 
 const getRunStatusInput = z.object({
@@ -80,18 +81,21 @@ export const getRunStatusTool = {
           ]
             .filter((line, i, all) => line !== '' || all[i - 1] !== '')
             .join('\n'),
+          { runId: run.id, status: run.status },
         );
       }
 
       if (!run.result) {
         return toolText(
           [`## 🛑 \`${run.id}\` ${run.status}`, '', run.error ?? 'The run stopped before producing a result.', ...footer].join('\n'),
+          { ok: false, runId: run.id, status: run.status },
         );
       }
 
       const took = run.finishedAt ? formatDuration(run.finishedAt - run.startedAt) : '—';
       return toolText(
         [`_Background run \`${run.id}\` — ${run.status} after ${took}_`, '', renderRunResult(run.result, run.projectRoot), ...footer].join('\n'),
+        { ok: run.result.ok, runId: run.id, status: run.status, run: runData(run.result) },
       );
     }),
 };

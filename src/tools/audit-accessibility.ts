@@ -216,6 +216,13 @@ export const auditAccessibilityTool = {
       });
       const login = loginHint(outcome.data.finalUrl, state);
       if (login) text += `\n\n> 🔒 ${login}`;
-      return toolText(text);
+      const shown = outcome.data.a11y.violations.filter((v) => impactRank(v.impact) <= impactRank(args.minImpact ?? 'minor'));
+      return toolText(text, {
+        ok: shown.length === 0,
+        url,
+        violations: shown
+          .sort((a, b) => impactRank(a.impact) - impactRank(b.impact) || b.nodeCount - a.nodeCount)
+          .map((v) => ({ id: v.id, impact: v.impact, help: v.help, helpUrl: v.helpUrl, count: v.nodeCount })),
+      });
     }),
 };

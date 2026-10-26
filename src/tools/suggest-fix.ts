@@ -617,6 +617,16 @@ export const suggestFixTool = {
       }
 
       const diff = unifiedDiff(failure.file, lines, proposal.lineNo, proposal.after);
+      const fix = {
+        file: failure.file,
+        line: proposal.lineNo,
+        before: proposal.before,
+        after: proposal.after,
+        kind: proposal.kind,
+        confidence: proposal.confidence,
+        why: proposal.why,
+        ...(proposal.alternatives?.length ? { alternatives: proposal.alternatives } : {}),
+      };
       out.push(
         `### Proposed ${proposal.kind === 'locator' ? 'locator fix' : 'expectation update'} — confidence **${proposal.confidence}**`,
         '',
@@ -636,11 +646,11 @@ export const suggestFixTool = {
             ? '> Next: call **suggest-fix** again with `apply: true` to write this change and re-run the test to verify it.'
             : '> This changes what the test asserts. Apply it by hand, or pass `apply: true, allowExpectationUpdate: true` if the new text is intended.',
         );
-        return toolText(out.join('\n'));
+        return toolText(out.join('\n'), { fix, applied: false });
       }
       if (!mayApply) {
         out.push('> ⛔ Not applied: expectation updates need `allowExpectationUpdate: true`, because they can hide a real regression.');
-        return toolText(out.join('\n'));
+        return toolText(out.join('\n'), { fix, applied: false });
       }
 
       // Apply: refuse if the file changed since we read it.
@@ -657,7 +667,7 @@ export const suggestFixTool = {
 
       if (args.verify === false) {
         out.push('> Not verified (verify: false). Re-run with **run-test** to check it.');
-        return toolText(out.join('\n'));
+        return toolText(out.join('\n'), { fix, applied: true });
       }
 
       const detection = await detectProject(root);
@@ -696,6 +706,6 @@ export const suggestFixTool = {
           '> The original file is restored. Call **get-failure** for the new failure, or try another candidate by hand.',
         );
       }
-      return toolText(out.join('\n'));
+      return toolText(out.join('\n'), { ok: result.ok, fix, applied: result.ok, verified: result.ok });
     }),
 };

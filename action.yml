@@ -21,6 +21,12 @@ inputs:
   comment:
     description: Post (or update) one PR comment with the report when the run fails
     default: 'true'
+  review:
+    description: On a pull request, post each suggested fix as a GitHub suggested change on the failing line, so a reviewer applies it with one click (only lines the PR changed)
+    default: 'true'
+  verify-fixes:
+    description: Re-run each failing test with its fix applied and post only fixes that pass (the workspace is restored afterwards)
+    default: 'true'
   fail-on-failure:
     description: Fail the step when tests fail
     default: 'true'
@@ -50,11 +56,16 @@ runs:
         PW_E2E_ARGS: ${{ inputs.args }}
         PW_E2E_FLAKY: ${{ inputs.flaky-runs }}
         PW_E2E_SUGGEST: ${{ inputs.suggest }}
+        PW_E2E_REVIEW: ${{ inputs.review == 'true' && github.event_name == 'pull_request' && inputs.suggest != '0' }}
+        PW_E2E_VERIFY: ${{ inputs.verify-fixes }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         report="$RUNNER_TEMP/playwright-e2e-report.md"
         extra=()
         if [ "$PW_E2E_FLAKY" != "0" ]; then extra+=(--flaky-runs "$PW_E2E_FLAKY"); fi
         extra+=(--suggest "$PW_E2E_SUGGEST")
+        if [ "$PW_E2E_SUGGEST" != "0" ] && [ "$PW_E2E_VERIFY" = "true" ]; then extra+=(--verify-fixes); fi
+        if [ "$PW_E2E_REVIEW" = "true" ]; then extra+=(--review); fi
         # Word-split args on purpose: it is a list of flags and paths.
         # shellcheck disable=SC2086
         set +e

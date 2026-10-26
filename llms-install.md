@@ -59,10 +59,13 @@ For any other MCP client, add this server to its config:
 
 ## 3. Verify
 
-1. Tell the user to restart or reload their agent so it loads the new server.
-2. After the reload, call the `list-tests` tool (or `run-test`) with the project root. A
+1. Run `npx -y playwright-e2e-mcp doctor` in the project root. It checks Node, the
+   Playwright config and install, the browsers, the test files and the client setup,
+   and prints the command that fixes anything marked ✗. Fix those first.
+2. Tell the user to restart or reload their agent so it loads the new server.
+3. After the reload, call the `list-tests` tool (or `run-test`) with the project root. A
    result listing the tests means the install worked.
-3. If the tool reports `NO_PLAYWRIGHT`, install `@playwright/test` and the browser
+4. If the tool reports `NO_PLAYWRIGHT`, install `@playwright/test` and the browser
    (step 1) and try again.
 
 ## Configuration (optional)

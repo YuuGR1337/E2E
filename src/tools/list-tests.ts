@@ -118,6 +118,10 @@ export const listTestsTool = {
         source: result.source,
         errorKind: result.error?.kind,
       });
-      return toolText(renderTests(result, normalizePath(root)));
+      return toolText(renderTests(result, normalizePath(root)), {
+        tests: result.tests.map((t) => ({ file: t.file, ...(t.line !== undefined ? { line: t.line } : {}), title: t.title, ...(t.projects?.length === 1 ? { project: t.projects[0] } : {}) })),
+        total: result.total,
+        truncated: result.truncated,
+      });
     }),
 };

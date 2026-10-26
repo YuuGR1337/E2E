@@ -90,6 +90,7 @@ other servers alone:
 
 ```bash
 npx -y playwright-e2e-mcp init            # --client all | cursor,vscode … · --dry-run
+npx -y playwright-e2e-mcp doctor          # checks Node, Playwright, browsers and client setup
 ```
 
 **Or let your agent do it.** Paste this into any coding agent:
@@ -333,12 +334,15 @@ npx -y playwright-e2e-mcp ci --help
 ```
 
 As a GitHub Action, it adds the report to the job summary and keeps one PR
-comment up to date when the run fails:
+comment up to date when the run fails. On a pull request it also re-runs each
+failing test with its suggested fix and posts the fixes that pass as **suggested
+changes** on the failing lines, so a reviewer applies one with the **Commit
+suggestion** button (only on lines the PR changed; the rest stay in the report):
 
 ```yaml
 permissions:
   contents: read
-  pull-requests: write   # only for the PR comment
+  pull-requests: write   # for the PR comment and the suggested fixes
 steps:
   - uses: actions/checkout@v6
   - uses: actions/setup-node@v6
@@ -351,8 +355,8 @@ steps:
       # args: --browser chromium tests/checkout
 ```
 
-Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`,
-`fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`, `report`.
+Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`, `review`,
+`verify-fixes`, `fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`, `report`.
 
 ## Configuration
 
@@ -362,7 +366,8 @@ Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`,
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
-| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, CI report, flaky, history, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All fourteen tool definitions cost about 9k tokens of context per request; `core` costs about 2.3k |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, CI report, flaky, history, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All fourteen tool definitions cost about 11k tokens of context per request; `core` costs about 4k (9k and 2.3k with `PW_MCP_OUTPUT_SCHEMAS=0`) |
+| `PW_MCP_OUTPUT_SCHEMAS` | on | `0` leaves the output schemas out of the tool list to save context. Results still carry `structuredContent` (see [Structured results](docs/tools.md#structured-results)) |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |

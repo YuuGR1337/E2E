@@ -10,7 +10,8 @@
  * itself failed (no Playwright, config error, timeout) or bad arguments.
  */
 
-import { appendFile, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ToolContext, ToolResponse } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
@@ -18,6 +19,9 @@ import { createToolStore } from '../tools/shared.js';
 import { runTestTool } from '../tools/run-test.js';
 import { diagnoseFlakyTool } from '../tools/diagnose-flaky.js';
 import { suggestFixTool } from '../tools/suggest-fix.js';
+import type { StructuredResult } from '../tools/structured.js';
+import { postSuggestionReview, pullRequestFromEnv } from './review.js';
+import type { FixSuggestion } from './review.js';
 
 export const CI_USAGE = [
   'Usage: playwright-e2e-mcp ci [options] [test files…]',
@@ -35,6 +39,10 @@ export const CI_USAGE = [
   '  --flaky-runs <n>       repeat failing tests n times (2-10) for a flaky verdict',
   '  --suggest <n>          draft suggest-fix diffs for the first n failures (max 5)',
   '  --output <file>        also write the report to this file (for a PR comment)',
+  '  --verify-fixes         apply each suggested fix, re-run its test, then restore the file',
+  '  --suggestions <file>   write the suggested fixes as JSON (repository-relative paths)',
+  '  --review               on a GitHub pull request, post the fixes as suggested changes',
+  '                         (needs GITHUB_TOKEN or GH_TOKEN with pull-requests: write)',
   '',
 ].join('\n');
 
@@ -49,6 +57,9 @@ export interface CiOptions {
   flakyRuns?: number;
   suggest: number;
   output?: string;
+  verifyFixes: boolean;
+  suggestions?: string;
+  review: boolean;
   testFiles: string[];
 }
 
@@ -76,6 +87,9 @@ export function parseCiArgs(argv: string[]): CiOptions {
       'flaky-runs': { type: 'string' },
       suggest: { type: 'string' },
       output: { type: 'string' },
+      'verify-fixes': { type: 'boolean' },
+      suggestions: { type: 'string' },
+      review: { type: 'boolean' },
     },
   });
   const browser = values.browser;
@@ -93,12 +107,36 @@ export function parseCiArgs(argv: string[]): CiOptions {
     flakyRuns: intOption(values['flaky-runs'], 'flaky-runs', 2, 10),
     suggest: intOption(values.suggest, 'suggest', 0, 5) ?? 0,
     output: values.output,
+    verifyFixes: values['verify-fixes'] === true,
+    suggestions: values.suggestions,
+    review: values.review === true,
     testFiles: positionals,
   };
 }
 
 function text(response: ToolResponse): string {
   return response.content.map((block) => block.text).join('\n');
+}
+
+function structured(response: ToolResponse): StructuredResult | undefined {
+  return response.structuredContent as StructuredResult | undefined;
+}
+
+/** Put the original line back after a verification run applied a fix. */
+async function restoreLine(file: string, line: number, before: string, after: string): Promise<void> {
+  const source = await readFile(file, 'utf8');
+  const eol = source.includes('\r\n') ? '\r\n' : '\n';
+  const lines = source.split(/\r?\n/);
+  if (lines[line - 1] !== after) return;
+  lines[line - 1] = before;
+  await writeFile(file, lines.join(eol), 'utf8');
+}
+
+/** A project-relative file as a repository-relative posix path, or undefined outside the repository. */
+export function repoPath(projectRoot: string, file: string, repoRoot: string): string | undefined {
+  const relative = path.relative(path.resolve(repoRoot), path.resolve(projectRoot, file));
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  return relative.split(path.sep).join('/');
 }
 
 /** Run the CI flow; returns the exit code. */
@@ -141,12 +179,74 @@ export async function runCi(argv: string[]): Promise<number> {
   const failures = result?.failures ?? [];
   let code = result === undefined || run.isError ? 2 : result.ok ? 0 : failures.length > 0 ? 1 : 2;
 
-  if (code === 1 && options.suggest > 0) {
+  const fixes: FixSuggestion[] = [];
+  const suggest = options.review || options.suggestions ? Math.max(options.suggest, 1) : options.suggest;
+  if (code === 1 && suggest > 0 && ctx.store.lastRun) {
     // Before diagnose-flaky, which replaces the last run suggest-fix indexes into.
-    const count = Math.min(options.suggest, ctx.store.lastRun?.result.failures.length ?? 0);
+    // A verification run replaces it too, so each fix starts from the suite run.
+    const suiteRun = ctx.store.lastRun;
+    const count = Math.min(suggest, suiteRun.result.failures.length);
     for (let index = 1; index <= count; index += 1) {
-      const fix = await suggestFixTool.handler({ index, config: options.config }, ctx);
-      sections.push(text(fix).replace(/^## /m, '### '));
+      ctx.store.setLastRun(suiteRun);
+      const response = await suggestFixTool.handler({ index, config: options.config }, ctx);
+      let section = text(response).replace(/^## /m, '### ');
+      const fix = structured(response)?.fix;
+      let verified = false;
+      if (fix && options.verifyFixes) {
+        ctx.store.setLastRun(suiteRun);
+        const trial = await suggestFixTool.handler(
+          { index, config: options.config, apply: true, allowExpectationUpdate: true },
+          ctx,
+        );
+        verified = structured(trial)?.verified === true;
+        // A passing fix stays written by suggest-fix; CI only reports it.
+        if (verified) await restoreLine(path.resolve(projectRoot, fix.file), fix.line, fix.before, fix.after);
+        section += verified
+          ? '\n\n✅ **Verified in CI:** the test passes with this change.'
+          : '\n\n⚠️ **Not verified:** the test still failed with this change in CI.';
+      }
+      sections.push(section);
+      const failure = suiteRun.result.failures[index - 1];
+      const target = fix ? repoPath(projectRoot, fix.file, process.env.GITHUB_WORKSPACE ?? projectRoot) : undefined;
+      if (fix && target && (verified || !options.verifyFixes)) {
+        fixes.push({
+          path: target,
+          line: fix.line,
+          before: fix.before,
+          after: fix.after,
+          kind: fix.kind,
+          confidence: fix.confidence,
+          why: fix.why,
+          verified,
+          test: failure?.title ?? fix.file,
+        });
+      }
+    }
+    ctx.store.setLastRun(suiteRun);
+  }
+
+  if (options.suggestions) {
+    try {
+      await writeFile(options.suggestions, `${JSON.stringify(fixes, null, 2)}\n`, 'utf8');
+    } catch (err) {
+      process.stderr.write(`could not write the suggestions: ${(err as Error).message}\n`);
+    }
+  }
+  if (options.review && fixes.length > 0) {
+    const pr = await pullRequestFromEnv();
+    if (!pr) {
+      process.stderr.write('--review: not a pull_request run, or no GITHUB_TOKEN/GH_TOKEN; fixes stay in the report.\n');
+    } else {
+      const review = await postSuggestionReview(fixes, pr);
+      if (review.error) process.stderr.write(`::warning::Could not post suggested fixes: ${review.error}\n`);
+      else if (review.posted.length > 0) {
+        sections.push(
+          `💡 Posted ${review.posted.length === 1 ? 'a suggested change' : `${review.posted.length} suggested changes`} on this PR: use **Commit suggestion** to apply.`,
+        );
+      }
+      if (review.outsideDiff.length > 0) {
+        process.stderr.write(`${review.outsideDiff.length} fix(es) are on lines this PR did not change, so they are only in the report.\n`);
+      }
     }
   }
 

@@ -39,6 +39,7 @@ import { childEnv, runProcess } from '../utils/playwright-runner.js';
 import { extractJsonFromText } from '../utils/report-parser.js';
 import { BLOCKED_RANGES, assertUrlAllowed, blockPrivateUrls } from '../utils/url-policy.js';
 import { serverlessChromium, serverlessChromiumEnabled } from '../utils/serverless-chromium.js';
+import type { StructuredResult } from './structured.js';
 
 /* ------------------------------------------------------------------ */
 /* State + responses                                                   */
@@ -56,8 +57,9 @@ export function createToolStore(): ToolStore {
   };
 }
 
-export function toolText(markdown: string): ToolResponse {
-  return { content: [{ type: 'text', text: markdown }] };
+/** A Markdown result, with structured fields beside it when the tool has them. */
+export function toolText(markdown: string, data?: Omit<StructuredResult, 'ok'> & { ok?: boolean }): ToolResponse {
+  return { content: [{ type: 'text', text: markdown }], structuredContent: { ok: true, ...data } };
 }
 
 export function toolError(
@@ -72,7 +74,11 @@ export function toolError(
   const lines = [`## ❌ ${kind}`, '', message];
   if (hint) lines.push('', '**How to fix:**', hint);
   if (details) lines.push('', '```text', details.trim(), '```');
-  return { content: [{ type: 'text', text: lines.join('\n') }], isError: true };
+  return {
+    content: [{ type: 'text', text: lines.join('\n') }],
+    structuredContent: { ok: false, error: { kind, message, ...(hint ? { hint } : {}) } },
+    isError: true,
+  };
 }
 
 /** Run a tool body, converting any thrown error into a tool response. */

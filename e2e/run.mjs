@@ -371,6 +371,12 @@ async function phaseHandshake(client, pkg) {
   );
   const missingTitles = tools.filter((tool) => typeof tool.title !== 'string' || tool.title === '');
   check('every tool has a title', missingTitles.length === 0, `untitled: ${missingTitles.map((t) => t.name).join(', ')}`);
+  const withSchema = tools.filter((tool) => tool.outputSchema?.type === 'object').map((tool) => tool.name).sort();
+  check(
+    'the chained tools declare output schemas',
+    JSON.stringify(withSchema) === JSON.stringify(['audit-accessibility', 'audit-performance', 'diagnose-flaky', 'get-failure', 'get-run-status', 'list-tests', 'run-test', 'suggest-fix']),
+    `got ${JSON.stringify(withSchema)}`,
+  );
 }
 
 async function phaseLivePage(client, origin) {
@@ -552,12 +558,23 @@ async function phaseTestRuns(client, origin) {
   contains('fail run names the missing save-btn', fail.text, 'save-btn');
   contains('fail run reports stats | 0 | 1 | 0 | 0 |', fail.text, '| 0 | 1 | 0 | 0 |');
   contains('fail run reports the project-relative file path', fail.text, '**File:** `tests/fail.spec.ts');
+  const failData = fail.result.structuredContent;
+  check(
+    'run-test returns structured results',
+    failData?.ok === false && failData.run?.failed === 1 && failData.run.failures?.[0]?.file === 'tests/fail.spec.ts' && typeof failData.run.failures[0].line === 'number',
+    JSON.stringify(failData).slice(0, 400),
+  );
 
   const failure = await callTool(client, 'get-failure', {}, 60_000);
   contains('get-failure reports Failure 1 of 1', failure.text, '## Failure 1 of 1');
   contains('get-failure titles the failure', failure.text, 'checkout save button surfaces cart errors');
   contains('get-failure points at the project-relative file', failure.text, '**File:** `tests/fail.spec.ts');
   contains('get-failure suggests a runnable re-run path', failure.text, 'testFiles: ["tests/fail.spec.ts:');
+  check(
+    'get-failure returns the failure as structured data',
+    failure.result.structuredContent?.failure?.title?.includes('checkout save button') && failure.result.structuredContent.total === 1,
+    JSON.stringify(failure.result.structuredContent).slice(0, 400),
+  );
   contains('get-failure captured the DOM at failure (trace)', failure.text, '### DOM at failure (Playwright trace)');
   contains('get-failure lists the failed 404 request', failure.text, '### Network requests that failed');
   contains('get-failure shows the 404 URL', failure.text, 'missing.json');
@@ -741,9 +758,16 @@ async function phaseHistoryAndHeal(client) {
   const proposal = await callTool(client, 'suggest-fix', {}, 90_000);
   contains('suggest-fix proposes the role locator', proposal.text, "+  await page.getByRole('button', { name: 'Buy now' }).click({ timeout: 3000 });");
   contains('suggest-fix rates it high confidence', proposal.text, 'confidence **high**');
+  const proposed = proposal.result.structuredContent;
+  check(
+    'suggest-fix returns the fix as structured data',
+    proposed?.applied === false && proposed.fix?.file === 'tests/heal.spec.ts' && proposed.fix.after.includes("getByRole('button', { name: 'Buy now' })") && proposed.fix.before.includes('buy-button'),
+    JSON.stringify(proposed).slice(0, 400),
+  );
   check('suggest-fix without apply leaves the file alone', readFileSync(healPath, 'utf8').includes("getByTestId('buy-button')"), 'file changed');
   const applied = await callTool(client, 'suggest-fix', { apply: true }, 180_000);
   contains('suggest-fix apply verifies with a re-run', applied.text, '### ✅ Verified');
+  check('suggest-fix reports verified: true', applied.result.structuredContent?.verified === true, JSON.stringify(applied.result.structuredContent).slice(0, 300));
   contains('the spec now uses the healed locator', readFileSync(healPath, 'utf8'), "getByRole('button', { name: 'Buy now' })");
   rmSync(healPath, { force: true });
 
@@ -834,6 +858,40 @@ async function phaseProfilesAndCi(origin) {
   contains('ci report carries the suggest-fix section', ci.stdout, 'Fix for failure 1');
   check('ci writes the --output report', existsSync(reportPath) && readFileSync(reportPath, 'utf8') === ci.stdout, reportPath);
   check('ci appends to the GitHub job summary', existsSync(summaryPath) && readFileSync(summaryPath, 'utf8').includes('## Playwright run'), summaryPath);
+
+  // --verify-fixes: the fix is tried, the test passes, and the file is restored.
+  const healPath = path.join(fixtureRoot, 'tests', 'ci-heal.spec.ts');
+  const healSource = [
+    "import { expect, test } from '@playwright/test';",
+    '',
+    "test('buy button still works', async ({ page }) => {",
+    "  await page.goto('/');",
+    "  await page.getByTestId('buy-button').click({ timeout: 3000 });",
+    "  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();",
+    '});',
+    '',
+  ].join('\n');
+  writeFileSync(healPath, healSource);
+  const fixesPath = path.join(fixtureRoot, 'test-results', 'fixes.json');
+  const verifyRun = await new Promise((resolve) => {
+    const proc = spawn(
+      process.execPath,
+      [serverEntry, 'ci', '--no-retry', '--suggest', '1', '--verify-fixes', '--suggestions', fixesPath, 'tests/ci-heal.spec.ts'],
+      { cwd: fixtureRoot, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+    );
+    let stdout = '';
+    proc.stdout.on('data', (chunk) => (stdout += chunk));
+    proc.on('close', (code) => resolve({ code, stdout }));
+  });
+  contains('ci --verify-fixes reports the fix as verified', verifyRun.stdout, 'Verified in CI');
+  const fixes = existsSync(fixesPath) ? JSON.parse(readFileSync(fixesPath, 'utf8')) : [];
+  check(
+    'ci --suggestions writes the verified fix',
+    fixes.length === 1 && fixes[0].path === 'tests/ci-heal.spec.ts' && fixes[0].line === 5 && fixes[0].verified === true,
+    JSON.stringify(fixes).slice(0, 400),
+  );
+  check('ci --verify-fixes restores the spec afterwards', readFileSync(healPath, 'utf8') === healSource, readFileSync(healPath, 'utf8').slice(0, 300));
+  rmSync(healPath, { force: true });
 }
 
 /* ------------------------------------------------------------------ */

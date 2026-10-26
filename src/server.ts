@@ -32,6 +32,7 @@ import { analyzeHistoryTool } from './tools/analyze-history.js';
 import { getRunStatusTool } from './tools/get-run-status.js';
 import { loadReportTool } from './tools/load-report.js';
 import { registerPrompts } from './prompts.js';
+import { outputSchemaFor } from './tools/structured.js';
 
 const require = createRequire(import.meta.url);
 
@@ -252,7 +253,7 @@ export const READ_ONLY_TOOLS: readonly string[] = ['list-tests', 'get-failure', 
 
 /**
  * Named tool sets for PW_MCP_TOOLS / --tools. Every tool definition costs
- * context on each request (all fourteen are ~9k tokens), so a client that
+ * context on each request (all fourteen are ~11k tokens), so a client that
  * only fixes failing suites can load the core loop alone.
  */
 export const TOOL_PROFILES: Readonly<Record<string, readonly string[]>> = {
@@ -334,6 +335,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
+        // Results always carry structuredContent; the schema that describes
+        // it costs context on every request, so PW_MCP_OUTPUT_SCHEMAS=0 drops it.
+        ...(process.env.PW_MCP_OUTPUT_SCHEMAS !== '0' && outputSchemaFor(tool.name) ? { outputSchema: outputSchemaFor(tool.name) } : {}),
         annotations: tool.annotations,
       },
       async (args: unknown, reqCtx: ServerContext) => {
