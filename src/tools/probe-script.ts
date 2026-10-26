@@ -946,6 +946,8 @@ function summariseRequests(requests, timings, pageUrl) {
           }
         }
       }
+      // A device preset: report its screen, not the layout width of a page without a viewport meta tag.
+      if (cfg.device && page.viewportSize()) data.viewport = page.viewportSize();
     }
 
     data.consoleMessages = consoleMessages;

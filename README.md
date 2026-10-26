@@ -47,6 +47,8 @@ load-report ───┴─▶ get-failure ──▶ suggest-fix (apply + re-run
  (CI job report)        │                 └─ refuses when the element is really gone (app bug)
                         └─ DOM at failure, failed requests, console errors
 every run ──▶ analyze-history (flaky / broken / slow / which commit broke it)
+test code ──▶ audit-tests (flake risks, ranked by history, verified rewrites)
+red at HEAD ─▶ bisect-failure (runs it across git history, names the breaking commit)
 ```
 
 ## Key features
@@ -280,6 +282,8 @@ setup without your own tests, ask it to run `examples/sample-test.spec.ts` from 
 | `audit-performance` | Measure lab **Web Vitals** (LCP, CLS, TBT, FCP, TTFB, INP during steps), optionally as a throttled phone and the median of several runs; rate them or check budgets, name the LCP and shifting elements as verified locators, list heavy and render-blocking requests, and return a budget test |
 | `diagnose-flaky` | Run a failing test 2–10 times **with retries disabled** and return an evidence verdict: `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING`; tells parallelism and **test-order** bugs from races |
 | `analyze-history` | Rank flaky, regressed and broken tests from the local run history, group failures by cause, list the slowest tests, show stability by day, name **the commit where each test went bad**, or show one test's timeline |
+| `audit-tests` | Audit the **test code** for flake risks (hard waits, one-shot assertions instead of web-first ones, missing `await`s, `.only`, force clicks, `networkidle`, element handles, layout selectors), ranked by how flaky those tests have been in the run history; `fix: true` rewrites the mechanical ones, re-runs the files and reverts if they fail |
+| `bisect-failure` | **Find the commit that broke a test**: binary-search git history between a good and a bad commit, running the test at each step in a temporary worktree (your checkout is untouched), and report the first bad commit, what it changed and how the test failed |
 
 Two **prompts** package the main workflows for clients that show them as slash commands:
 `fix-failing-test` and `triage-flaky-tests`.
@@ -366,7 +370,7 @@ Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`, `review`,
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
-| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, CI report, flaky, history, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All fourteen tool definitions cost about 11k tokens of context per request; `core` costs about 4k (9k and 2.3k with `PW_MCP_OUTPUT_SCHEMAS=0`) |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, CI report, flaky, history, test audit, bisect, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All sixteen tool definitions cost about 12k tokens of context per request; `core` costs about 4k (10k and 2.3k with `PW_MCP_OUTPUT_SCHEMAS=0`) |
 | `PW_MCP_OUTPUT_SCHEMAS` | on | `0` leaves the output schemas out of the tool list to save context. Results still carry `structuredContent` (see [Structured results](docs/tools.md#structured-results)) |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |

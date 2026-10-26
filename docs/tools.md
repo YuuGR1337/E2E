@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [Hosted endpoint](hosted-endpoint.md) · [Development](development.md)
 
-Every argument of the fourteen tools, with example output. The short list is in the
+Every argument of the sixteen tools, with example output. The short list is in the
 [README](../README.md#tools).
 
 ## Structured results
@@ -22,8 +22,10 @@ described by each tool's `outputSchema`:
 | `suggest-fix` | `fix` (`file`, `line`, `before`, `after`, `kind`, `confidence`, `why`, `alternatives`), `applied`, `verified` |
 | `audit-accessibility` | `url`, `violations[]` (`id`, `impact`, `help`, `helpUrl`, `count`) |
 | `audit-performance` | `url`, `metrics[]` (`id`, `value`, `unit`, `rating`, `budget`, `overBudget`) |
+| `audit-tests` | `findings[]` (`file`, `line`, `rule`, `severity`, `message`, `fix`, `test`), `total`, `truncated`, `applied`, `verified` |
+| `bisect-failure` | `status` (`found`, `ambiguous`, `max-steps`, `not-failing`, `good-fails`), `firstBad` (`sha`, `subject`, `author`, `date`, `files`), `steps[]` (`commit`, `verdict`, `note`) |
 
-The schemas add about 2k tokens to the tool list. `PW_MCP_OUTPUT_SCHEMAS=0` leaves them
+The schemas add about 2.5k tokens to the tool list. `PW_MCP_OUTPUT_SCHEMAS=0` leaves them
 out; results still carry the same fields.
 
 ## Page state: signed-in pages, headers and steps
@@ -453,6 +455,58 @@ Each run records the commit it tested (from git locally, from the report's metad
 runs). The `commits` view uses that to say where a test went bad: the first failing or flaky
 run after its last streak of passes, with the last good commit and a `git diff` to compare
 them.
+
+## `audit-tests`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `testDir` | string | Audit only this folder (default: the config's `testDir`) |
+| `filter` | string | Substring of the file path |
+| `minSeverity` | `low` \| `medium` \| `high` | Leave out findings below this (default `low`) |
+| `historyRuns` | number | Recent runs of the history to weigh in (default `50`) |
+| `limit` | number | Max findings listed (default `50`; the summary counts all) |
+| `fix` | boolean | Rewrite the mechanical findings, re-run the touched files, and restore them if the run fails |
+| `verify` | boolean | With `fix`: re-run the touched files (default `true`) |
+| `config` / `timeoutMs` | — | For the verify run, as with `run-test` |
+
+Reads the spec files (no browser, nothing runs unless `fix` is set) and flags the code that
+makes tests pass or fail on timing:
+
+| Rule | Severity | Fixed by `fix: true` |
+| --- | --- | --- |
+| `hard-wait` (`waitForTimeout`), `sleep` (`setTimeout` promise) | high | no: what to wait for instead is a judgement call |
+| `non-retrying-assertion`: `expect(await x.isVisible()).toBe(true)`, `expect(await x.textContent()).toBe(…)`, `count()`, `inputValue()`, `getAttribute()`, `page.title()`, `page.url()` | high | yes: `await expect(x).toBeVisible()`, `toHaveText`, `toHaveCount`, `toHaveValue`, `toHaveAttribute`, `toHaveTitle`, `toHaveURL` |
+| `missing-await` on a web-first assertion, `expect.poll` or a page action | high | yes: adds the `await` |
+| `focused-test` (`.only`) | high | yes: removes `.only` |
+| `force-action`, `networkidle`, `element-handle` (`page.$`, `waitForSelector`), `fragile-selector` (XPath, `nth-child`, hashed class names, long CSS chains), `no-timeout` (`timeout: 0`) | medium | no |
+| `hardcoded-url` (`goto('http://localhost…')`), `serial-mode` | low | no |
+
+Files are ranked by their findings weighted by the run history: a file whose tests flipped
+between pass and fail ranks above a cleaner-looking one that never flaked, and a finding in
+a test that flaked is marked 🔥. Run it before `diagnose-flaky` to see the likely cause, or
+in review to stop new flake risks.
+
+## `bisect-failure`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `test` | string | The failing spec file (required) |
+| `grep` | string | Test title (or part) inside the file. Better than a `:line` suffix, since lines move between commits |
+| `project` | string | Playwright project to run in |
+| `good` | string | Commit, tag or ref where the test passed (e.g. `v1.4.0`, `HEAD~30`). Default: the newest commit where the run history saw it pass |
+| `bad` | string | Where it fails (default `HEAD`) |
+| `repeat` | number | Runs per commit, 1–10; any failure marks the commit bad. Raise it for a flaky failure |
+| `maxSteps` | number | Commits to test besides the two ends (default `12`, enough for 4,000 commits) |
+| `stepTimeoutMs` | number | Limit for each run (default `180000`) |
+| `config` | string | As with `run-test` |
+
+It checks out commits in a temporary `git worktree` (your checkout, branch and uncommitted
+changes are untouched), links your installed `node_modules` into it, and runs the test
+there with retries off. It first confirms the test fails at `bad` and passes at `good`,
+then binary-searches the first-parent history. A commit where the test file does not exist
+or the project does not run is skipped, as in `git bisect skip`. The report names the first
+bad commit with its author, date, changed files and the failure there, and flags it when
+the lockfile changed in the range (every step uses your current dependencies).
 
 ## `load-report`
 

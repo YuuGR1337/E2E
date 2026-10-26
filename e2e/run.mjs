@@ -38,6 +38,8 @@ const EXPECTED_TOOLS = [
   'analyze-history',
   'audit-accessibility',
   'audit-performance',
+  'audit-tests',
+  'bisect-failure',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',
@@ -374,7 +376,7 @@ async function phaseHandshake(client, pkg) {
   const withSchema = tools.filter((tool) => tool.outputSchema?.type === 'object').map((tool) => tool.name).sort();
   check(
     'the chained tools declare output schemas',
-    JSON.stringify(withSchema) === JSON.stringify(['audit-accessibility', 'audit-performance', 'diagnose-flaky', 'get-failure', 'get-run-status', 'list-tests', 'run-test', 'suggest-fix']),
+    JSON.stringify(withSchema) === JSON.stringify(['audit-accessibility', 'audit-performance', 'audit-tests', 'bisect-failure', 'diagnose-flaky', 'get-failure', 'get-run-status', 'list-tests', 'run-test', 'suggest-fix']),
     `got ${JSON.stringify(withSchema)}`,
   );
 }
@@ -735,6 +737,34 @@ async function phaseHistoryAndHeal(client) {
   contains('analyze-history shows when tests went bad', commits.text, '## When each test went bad');
   const timeline = await callTool(client, 'analyze-history', { test: 'inventory sync' }, 30_000);
   contains('analyze-history shows one test timeline', timeline.text, '**Timeline (oldest → newest):**');
+
+  // audit-tests: finds the risks, rewrites the one-shot assertion, proves it and keeps it.
+  const auditPath = path.join(fixtureRoot, 'tests', 'audit-me.spec.ts');
+  writeFileSync(
+    auditPath,
+    [
+      "import { expect, test } from '@playwright/test';",
+      '',
+      "test('cta shows', async ({ page }) => {",
+      "  await page.goto('/');",
+      '  await page.waitForTimeout(50);',
+      "  expect(await page.getByTestId('cta-button').isVisible()).toBe(true);",
+      '});',
+      '',
+    ].join('\n'),
+  );
+  const audit = await callTool(client, 'audit-tests', { filter: 'audit-me' }, 60_000);
+  contains('audit-tests flags the hard wait', audit.text, '**hard-wait** `tests/audit-me.spec.ts:5`');
+  contains('audit-tests offers the web-first rewrite', audit.text, "Fix: `await expect(page.getByTestId('cta-button')).toBeVisible();`");
+  check('audit-tests returns findings as data', audit.result.structuredContent?.findings?.length === 2, JSON.stringify(audit.result.structuredContent).slice(0, 300));
+  const audited = await callTool(client, 'audit-tests', { filter: 'audit-me', fix: true }, 180_000);
+  contains('audit-tests fix is verified by a re-run', audited.text, 'Verified: the touched files pass');
+  check(
+    'audit-tests fix keeps the rewrite and leaves the hard wait for a person',
+    readFileSync(auditPath, 'utf8').includes("  await expect(page.getByTestId('cta-button')).toBeVisible();") && readFileSync(auditPath, 'utf8').includes('waitForTimeout(50)'),
+    readFileSync(auditPath, 'utf8'),
+  );
+  rmSync(auditPath, { force: true });
 
   const started = await callTool(client, 'run-test', { testFiles: ['tests/pass.spec.ts'], background: true }, 30_000);
   const runId = /`(run-[a-z0-9-]+)`/.exec(started.text)?.[1];

@@ -101,6 +101,27 @@ export const toolOutputSchema = z.object({
     )
     .optional(),
   url: z.string().optional(),
+  // audit-tests
+  findings: z
+    .array(
+      z.object({
+        file: z.string(),
+        line: z.number().int(),
+        rule: z.string(),
+        severity: z.enum(['high', 'medium', 'low']),
+        message: z.string(),
+        fix: z.string().optional().describe('the replacement line, when the fix is mechanical'),
+        test: z.string().optional(),
+      }),
+    )
+    .optional(),
+  // bisect-failure
+  firstBad: z
+    .object({ sha: z.string(), subject: z.string(), author: z.string(), date: z.string(), files: z.array(z.string()) })
+    .optional(),
+  steps: z
+    .array(z.object({ commit: z.string(), verdict: z.enum(['good', 'bad', 'skip']), note: z.string().optional() }))
+    .optional(),
 });
 
 export type StructuredResult = z.infer<typeof toolOutputSchema>;
@@ -148,11 +169,13 @@ const TOOL_FIELDS: Readonly<Record<string, ReadonlyArray<keyof StructuredResult>
   'suggest-fix': ['fix', 'applied', 'verified'],
   'audit-accessibility': ['url', 'violations'],
   'audit-performance': ['url', 'metrics'],
+  'audit-tests': ['findings', 'total', 'truncated', 'applied', 'verified'],
+  'bisect-failure': ['status', 'firstBad', 'steps'],
 };
 
 /**
  * The output schema for one tool: the envelope plus only that tool's fields,
- * so tools/list does not repeat every tool's fields fourteen times. Tools
+ * so tools/list does not repeat every tool's fields sixteen times. Tools
  * with no fields of their own declare none (their results still carry the
  * envelope): each schema is context a client pays for on every request.
  */

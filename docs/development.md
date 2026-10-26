@@ -6,7 +6,7 @@
 src/
 ├── index.ts            # bin entry point (--version/--help, main-module guard)
 ├── server.ts           # McpServer setup, tool registration, shutdown handling
-├── tools/              # the fourteen tools, the probe script + shared plumbing
+├── tools/              # the sixteen tools, the probe script + shared plumbing
 ├── prompts.ts          # fix-failing-test, triage-flaky-tests
 ├── utils/              # playwright-runner, report-parser, project-detector, path-utils,
 │                       # logger, trace-reader (trace.zip → DOM/network/console),
@@ -56,7 +56,7 @@ server over stdio against a live fixture app and a Playwright project under
 `e2e/fixture/`, then drives it exactly like an MCP client and asserts ~40 behaviours
 that only appear end-to-end:
 
-- initialize handshake, 14 tools, 2 prompts, spec tool annotations and object input schemas,
+- initialize handshake, 16 tools, 2 prompts, spec tool annotations and object input schemas,
 - verified locators, locator validation, signed-in pages (`storageState`) and page steps,
 - background runs with progress, run history views, and `suggest-fix` healing a drifted
   locator and an ambiguous one, verifying each with a re-run (and refusing when the
