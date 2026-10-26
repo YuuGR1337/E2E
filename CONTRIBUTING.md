@@ -24,7 +24,7 @@ npm run e2e     # build + live MCP ↔ Playwright integration suite
 ```
 
 `src/` layout and the other scripts are described under
-[Development](README.md#development) in the README.
+[docs/development.md](docs/development.md).
 
 ## Pull requests
 
