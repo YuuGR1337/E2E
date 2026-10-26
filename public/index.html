@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>playwright-e2e-mcp · MCP endpoint</title>
+    <link rel="icon" href="/logo.png" />
     <style>
       :root { color-scheme: light dark; }
       body {
@@ -18,50 +19,77 @@
       ul { padding-left: 1.1rem; }
       li { margin: .25rem 0; }
       .ok { color: #16a34a; font-weight: 600; }
+      .bad { color: #dc2626; font-weight: 600; }
+      .wrap { white-space: pre-wrap; word-break: break-all; }
+      header { display: flex; align-items: center; gap: .75rem; }
+      header img { width: 40px; height: 40px; }
+      a { color: #2563eb; }
+      h2 { font-size: 1.05rem; margin: 1.75rem 0 .5rem; }
     </style>
   </head>
   <body>
     <main>
-      <h1>playwright-e2e-mcp</h1>
-      <p class="sub">The test doctor for AI agents: run your Playwright suite, diagnose failures from the trace, apply fixes proven by a re-run, and audit pages for accessibility and speed.</p>
+      <header><img src="/logo.png" alt="" /><h1>playwright-e2e-mcp</h1></header>
+      <p class="sub">The test doctor for AI agents: run your Playwright suite, diagnose failures from the trace, apply fixes proven by a re-run, and audit pages for accessibility and speed.
+        <a href="https://github.com/xsignon-secure/E2E#readme">GitHub</a> · <a href="https://www.npmjs.com/package/playwright-e2e-mcp">npm</a></p>
 
-      <p><span class="ok">●</span> Endpoint is live:</p>
+      <p><span id="status">○ Checking the endpoint…</span></p>
       <pre>https://playwright-e2e-mcp.vercel.app/api/mcp</pre>
 
-      <p>It speaks <strong>MCP Streamable HTTP</strong> and can expose the same fourteen tools as the stdio server:</p>
+      <p>It speaks <strong>MCP Streamable HTTP</strong>. <strong>It requires a bearer token</strong>: a request
+        without <code>Authorization: Bearer &lt;token&gt;</code> is answered <code>401 {"error":"unauthorized"}</code>.</p>
+
+      <h2>What works here</h2>
       <ul>
-        <li><code>run-test</code>, <code>get-run-status</code>, <code>get-failure</code>, <code>suggest-fix</code>, <code>list-tests</code></li>
-        <li><code>inspect-page</code>, <code>validate-selector</code>, <code>audit-accessibility</code>, <code>audit-performance</code></li>
-        <li><code>generate-e2e-test</code>, <code>compare-visual-state</code>, <code>diagnose-flaky</code>, <code>analyze-history</code></li>
+        <li><code>inspect-page</code>, <code>validate-selector</code>, <code>audit-accessibility</code> and
+          <code>audit-performance</code> on any public URL, in a bundled Chromium</li>
+        <li><code>list-tests</code> and <code>get-failure</code> on the example specs bundled with the deployment</li>
       </ul>
 
-      <p>Verify it with a handshake (this endpoint needs its bearer token):</p>
-      <pre>curl -X POST https://playwright-e2e-mcp.vercel.app/api/mcp \
+      <h2>What needs the local install</h2>
+      <ul>
+        <li>Your own tests: <code>run-test</code>, <code>get-run-status</code>, <code>suggest-fix</code>,
+          <code>diagnose-flaky</code>, <code>generate-e2e-test</code>, <code>analyze-history</code>, <code>load-report</code>
+          and <code>compare-visual-state</code> need your project next to the server</li>
+        <li><code>localhost</code> and private-network pages, Firefox and WebKit</li>
+      </ul>
+      <p>Run it next to your code with <code>npx -y playwright-e2e-mcp init</code>
+        (see the <a href="https://github.com/xsignon-secure/E2E#getting-started">README</a> for one-line installs).</p>
+
+      <h2>Connect a client</h2>
+      <p><strong>claude.ai connectors</strong> sign in with OAuth: add the endpoint as a custom connector, leave
+        the OAuth fields empty, and type the access key on the sign-in page that opens.
+        <strong>ChatGPT and other remote clients</strong> send the token as an API key (bearer token).</p>
+
+      <h2>Try it from a terminal</h2>
+      <p>Put your token in a variable first, so it stays out of the command. macOS / Linux:</p>
+      <pre class="wrap">export PW_TOKEN=&lt;token&gt;
+curl -s -X POST https://playwright-e2e-mcp.vercel.app/api/mcp \
   -H 'content-type: application/json' \
   -H 'accept: application/json, text/event-stream' \
-  -H 'authorization: Bearer &lt;token&gt;' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'</pre>
-
-      <p>
-        This hosted endpoint is for clients that only accept remote connectors (ChatGPT custom
-        connectors, remote MCP clients). <strong>It requires a bearer token</strong>: a request
-        without <code>Authorization: Bearer &lt;token&gt;</code> is answered
-        <code>401 {"error":"unauthorized"}</code>, and with it all fourteen tools are served. (A
-        self-hosted bridge started without <code>PW_MCP_HTTP_TOKEN</code> instead serves just the
-        read-only tools, <code>list-tests</code>, <code>get-failure</code> and <code>analyze-history</code>.)
-      </p>
-      <p>
-        <strong>claude.ai connectors</strong> sign in with OAuth instead: add the endpoint as a custom
-        connector, leave the OAuth fields empty, and type the access key on the sign-in page that opens.
-      </p>
-      <p>
-        <strong>What it can and cannot do:</strong> this endpoint runs in a cloud function with a bundled
-        Chromium, so with the token <code>inspect-page</code>, <code>validate-selector</code>,
-        <code>audit-accessibility</code> and <code>audit-performance</code> work on any public URL. It cannot see
-        your repository or your <code>localhost</code>, so it cannot run your own tests, and it does not open
-        Firefox, WebKit or private-network pages. To run, diagnose and fix your own tests, run the server next
-        to your code: <code>npx -y playwright-e2e-mcp init</code> (see the README for one-line installs).
-      </p>
+  -H "authorization: Bearer $PW_TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inspect-page","arguments":{"url":"https://example.com","view":"aria"}}}'</pre>
+      <p>Windows (cmd), one line:</p>
+      <pre class="wrap">set PW_TOKEN=&lt;token&gt;
+curl -s -X POST https://playwright-e2e-mcp.vercel.app/api/mcp -H "content-type: application/json" -H "accept: application/json, text/event-stream" -H "authorization: Bearer %PW_TOKEN%" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"inspect-page\",\"arguments\":{\"url\":\"https://example.com\",\"view\":\"aria\"}}}"</pre>
+      <p>The reply lists the page's headings, links and buttons. A self-hosted bridge started without
+        <code>PW_MCP_HTTP_TOKEN</code> needs no token but serves only <code>list-tests</code>, <code>get-failure</code>
+        and <code>analyze-history</code>.</p>
     </main>
+    <script>
+      // A 401 or 200 means the function answered; anything else means it is down.
+      fetch('/api/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      })
+        .then((res) => res.status === 401 || res.ok)
+        .catch(() => false)
+        .then((up) => {
+          const el = document.getElementById('status');
+          el.className = up ? 'ok' : 'bad';
+          el.textContent = up ? '● Endpoint is live:' : '● Endpoint is not responding:';
+        });
+    </script>
   </body>
 </html>
