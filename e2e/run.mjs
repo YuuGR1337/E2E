@@ -919,10 +919,12 @@ async function phaseProfilesAndCi(origin) {
     proc.on('close', (code) => resolve({ code, stdout }));
   });
   contains('ci --verify-fixes reports the fix as verified', verifyRun.stdout, 'Verified in CI');
+  // Paths are relative to the repository on Actions (GITHUB_WORKSPACE), to the project elsewhere.
+  const healRepoPath = path.relative(process.env.GITHUB_WORKSPACE ?? fixtureRoot, healPath).split(path.sep).join('/');
   const fixes = existsSync(fixesPath) ? JSON.parse(readFileSync(fixesPath, 'utf8')) : [];
   check(
     'ci --suggestions writes the verified fix',
-    fixes.length === 1 && fixes[0].path === 'tests/ci-heal.spec.ts' && fixes[0].line === 5 && fixes[0].verified === true,
+    fixes.length === 1 && fixes[0].path === healRepoPath && fixes[0].line === 5 && fixes[0].verified === true,
     JSON.stringify(fixes).slice(0, 400),
   );
   check('ci --verify-fixes restores the spec afterwards', readFileSync(healPath, 'utf8') === healSource, readFileSync(healPath, 'utf8').slice(0, 300));
