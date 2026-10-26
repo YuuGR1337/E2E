@@ -112,7 +112,7 @@ Exit code 0 means passed, 1 tests failed, 2 the run itself failed. On GitHub
 Actions it also writes to the job summary. As an Action:
 
 ```yaml
-- uses: xsignon-secure/E2E@v0.5.1
+- uses: xsignon-secure/E2E@v0.6.0
   with:
     flaky-runs: 3
     suggest: 2
