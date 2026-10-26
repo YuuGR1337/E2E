@@ -25,6 +25,7 @@ import {
   codeFence,
   formatDuration,
   guard,
+  markdownCell,
   resolveConfigSelection,
   resolveProjectRoot,
   sanitizeTestPathArgument,
@@ -311,7 +312,7 @@ export const bisectFailureTool = {
         out.push('', '### Steps', '', '| Commit | Result | Subject | Note |', '|---|---|---|---|');
         for (const step of steps) {
           const icon = step.verdict === 'good' ? '✅ good' : step.verdict === 'bad' ? '❌ bad' : '⏭️ skip';
-          out.push(`| \`${short(step.commit)}\` | ${icon} | ${(subjects.get(step.commit) ?? '').replace(/\|/g, '\\|')} | ${(step.note ?? '').replace(/\|/g, '\\|').slice(0, 120)} |`);
+          out.push(`| \`${short(step.commit)}\` | ${icon} | ${markdownCell(subjects.get(step.commit) ?? '')} | ${markdownCell((step.note ?? '').slice(0, 120))} |`);
         }
         const info = bad === (await resolveCommit('HEAD', root, 'HEAD')) ? await localGitInfo(root) : undefined;
         if (info?.dirty) out.push('', '> Your uncommitted changes were not part of the search: it tested committed code only.');
