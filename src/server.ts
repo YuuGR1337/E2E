@@ -1,5 +1,5 @@
 /**
- * MCP server setup: creates the McpServer instance, registers the twelve
+ * MCP server setup: creates the McpServer instance, registers the thirteen
  * tools (with spec tool annotations) and the workflow prompts, and wires
  * each invocation to a ToolContext (per-tool logger, abort signal, progress
  * reporter, shared store, default project root).
@@ -23,6 +23,7 @@ import { inspectPageTool } from './tools/inspect-page.js';
 import { listTestsTool } from './tools/list-tests.js';
 import { validateSelectorTool } from './tools/validate-selector.js';
 import { auditAccessibilityTool } from './tools/audit-accessibility.js';
+import { auditPerformanceTool } from './tools/audit-performance.js';
 import { generateE2ETestTool } from './tools/generate-e2e-test.js';
 import { compareVisualStateTool } from './tools/compare-visual-state.js';
 import { diagnoseFlakyTool } from './tools/diagnose-flaky.js';
@@ -153,6 +154,18 @@ const TOOLS: ToolSpec[] = [
     handler: auditAccessibilityTool.handler as ToolSpec['handler'],
   },
   {
+    ...auditPerformanceTool,
+    title: 'Audit page performance',
+    // Opens a page and reads performance entries; no state-changing actions
+    // beyond the caller's own `actions`.
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    handler: auditPerformanceTool.handler as ToolSpec['handler'],
+  },
+  {
     ...generateE2ETestTool,
     title: 'Generate an E2E test',
     // Writes a spec file; with overwrite it replaces a spec it generated
@@ -225,14 +238,14 @@ export const READ_ONLY_TOOLS: readonly string[] = ['list-tests', 'get-failure', 
 
 /**
  * Named tool sets for PW_MCP_TOOLS / --tools. Every tool definition costs
- * context on each request (all twelve are ~5.6k tokens), so a client that
+ * context on each request (all thirteen are ~6k tokens), so a client that
  * only fixes failing suites can load the core loop alone.
  */
 export const TOOL_PROFILES: Readonly<Record<string, readonly string[]>> = {
   all: TOOLS.map((tool) => tool.name),
   core: ['run-test', 'get-run-status', 'get-failure', 'suggest-fix', 'diagnose-flaky', 'list-tests'],
   triage: ['run-test', 'get-run-status', 'get-failure', 'diagnose-flaky', 'analyze-history', 'list-tests'],
-  inspect: ['inspect-page', 'validate-selector', 'compare-visual-state', 'audit-accessibility'],
+  inspect: ['inspect-page', 'validate-selector', 'compare-visual-state', 'audit-accessibility', 'audit-performance'],
   author: ['list-tests', 'inspect-page', 'validate-selector', 'generate-e2e-test', 'run-test'],
 };
 

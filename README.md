@@ -42,6 +42,8 @@ run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ 
 | 🎲 | "Is this test flaky?" | Re-runs it many ways (repeated, alone, in random order) and names the exact test and seed that cause the flake. |
 | 📈 | "What's been breaking lately?" | Keeps a local run history and separates flaky, newly broken and always-broken tests. |
 | ♿ | "Check this page for accessibility" | Runs axe-core (WCAG 2.2 AA) and returns each problem with a ready-to-paste locator and regression test. |
+| ⚡ | "Why is this page slow?" | Measures Web Vitals (LCP, CLS, INP, TBT) on desktop or a throttled phone, names the slow element and the elements that jump, and hands back a budget test. |
+| 🧪 | "Show me the error state" | Mocks API responses (500s, empty lists, slow calls) so the AI can inspect, audit or measure states that are hard to reach. |
 | 🔐 | "Test the page after login" | Works behind sign-in with saved sessions, headers and click/fill steps. |
 | 🤖 | "Do it in CI" | A [GitHub Action and `ci` command](#ci-github-action-and-ci-command) post the diagnosis, flaky verdict and fix diffs on your PR. |
 
@@ -83,8 +85,16 @@ run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ 
   flaky, regressed and broken tests from the local run record.
 - **Accessibility.** `audit-accessibility` runs axe-core against WCAG 2.2 AA on any page,
   signed in or after steps, with offending elements as verified locators.
-- **Pages behind a login.** Every page tool accepts a Playwright `storageState`, extra
-  headers, and click/fill steps to reach a modal or a later step.
+- **Performance.** `audit-performance` measures lab Web Vitals (LCP, CLS, TBT, FCP, TTFB, and
+  INP for the interactions in `actions`), optionally as a throttled phone and as the median of
+  several runs, rates them against Google's thresholds or your budgets, and names the LCP
+  element and the elements that shifted as verified locators.
+- **Ambiguous locators.** When a locator suddenly matches two elements (strict mode
+  violation), `suggest-fix` takes the unique locator Playwright reports for the intended
+  match: the exact-name one, or the one you pick.
+- **Pages behind a login, in any state.** Every page tool accepts a Playwright
+  `storageState`, extra headers, click/fill steps to reach a modal or a later step, and
+  network mocks to force error, empty and slow states.
 
 </details>
 
@@ -151,7 +161,7 @@ code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","playwrigh
 ```
 
 Only need the fix loop? `--tools=core` (or `PW_MCP_TOOLS=core`) exposes six tools and
-halves the tool-definition context; see [Configuration](#configuration).
+cuts the tool-definition context by about two thirds; see [Configuration](#configuration).
 
 Details and per-client config: [Installation](#installation) ·
 [MCP client configuration](#mcp-client-configuration).
@@ -165,13 +175,14 @@ Details and per-client config: [Installation](#installation) ·
 | `run-test` | Run Playwright tests and return stats, failures, diagnostics and hints; reports progress, and `background: true` returns a run id for long suites |
 | `get-run-status` | Progress or final result of a background run; can wait for it or cancel it |
 | `get-failure` | Deep analysis of one failure: stack, expected/actual, **DOM snapshot at failure (from the Playwright trace)**, failed requests, console errors, next steps |
-| `suggest-fix` | Patch a failure: a drifted locator is replaced with one **proven unique** on the DOM at failure, changed copy gets the new expected text; `apply: true` writes it, re-runs the test and reverts if still red |
+| `suggest-fix` | Patch a failure: a drifted locator is replaced with one **proven unique** on the DOM at failure, an ambiguous one (strict mode violation) gets the unique locator of the intended match, changed copy gets the new expected text; `apply: true` writes it, re-runs the test and reverts if still red |
 | `inspect-page` | Open a URL headlessly (optionally signed in, after steps) and return elements with **verified Playwright locators**, CSS selectors, visibility, text and console output |
 | `list-tests` | List available tests (`file`, `line`, full title, projects) with filtering |
 | `validate-selector` | Check a CSS selector, Playwright selector or **locator expression** against a live page: validity, match count, and a sturdier verified locator for each match |
 | `generate-e2e-test` | Scaffold a Playwright test from a description using the project's **real** selectors and verified locators from the live page |
 | `compare-visual-state` | Visual regression: screenshot before/after a change and report *what* moved and how colors shifted |
 | `audit-accessibility` | Run axe-core (WCAG 2.2 AA by default) on a page, signed in or after steps, and return violations worst first with **verified locators** for the offending elements and a regression check |
+| `audit-performance` | Measure lab **Web Vitals** (LCP, CLS, TBT, FCP, TTFB, INP during steps), optionally as a throttled phone and the median of several runs; rate them or check budgets, name the LCP and shifting elements as verified locators, list heavy and render-blocking requests, and return a budget test |
 | `diagnose-flaky` | Run a failing test 2–10 times **with retries disabled** and return an evidence verdict: `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING`; tells parallelism and **test-order** bugs from races |
 | `analyze-history` | Rank flaky, regressed and broken tests from the local run history, group failures by cause, or show one test's timeline |
 
@@ -180,15 +191,30 @@ Two **prompts** package the main workflows for clients that show them as slash c
 
 ### Page state: signed-in pages, headers and steps
 
-`inspect-page`, `validate-selector` and `compare-visual-state` accept the same page-state
-arguments (`suggest-fix` accepts `storageState` and `headers` for a live `url`):
+`inspect-page`, `validate-selector`, `compare-visual-state`, `audit-accessibility` and
+`audit-performance` accept the same page-state arguments (`suggest-fix` accepts
+`storageState` and `headers` for a live `url`):
 
 | Argument | Type | Description |
 | --- | --- | --- |
 | `storageState` | string | Path inside the project to a Playwright storageState JSON (cookies + localStorage), e.g. `playwright/.auth/user.json` from your setup project. Defaults to `PW_MCP_STORAGE_STATE` |
 | `headers` | object | Extra HTTP headers for every request, e.g. `{ "Authorization": "Bearer …" }` |
 | `actions` | array | Up to 20 steps run after load: `{ "type": "click" \| "dblclick" \| "hover" \| "fill" \| "press" \| "check" \| "uncheck" \| "select" \| "wait" \| "goto", "locator"?, "value"?, "url"?, "ms"? }`. Locators use Playwright syntax, e.g. `getByRole('button', { name: 'Open settings' })` |
+| `routes` | array | Up to 20 network mocks applied before the page loads, first match wins: `{ "url": "**/api/cart", "method"?, "status"?, "json"? \| "body"?, "contentType"?, "headers"?, "abort"?, "delayMs"? }`. `json`, `body` or `status` fulfils the request, `abort: true` fails it, and `delayMs` alone slows the real request |
 | `viewport` | object | `{ "width": 390, "height": 844 }` (default 1280×720) |
+
+Mocks make states that are hard to reach easy to inspect, audit or measure: the error
+banner after a 500, the empty list, the spinner of a slow API, the page without a
+third-party script. The response says how many requests each mock handled and flags a mock
+that matched nothing, which usually means a wrong glob:
+
+```json
+"routes": [
+  { "url": "**/api/cart", "json": { "items": [] } },
+  { "url": "**/api/checkout", "method": "POST", "status": 500, "body": "boom" },
+  { "url": "**/googletagmanager.com/**", "abort": true }
+]
+```
 
 A failing step reports which one failed and how many ran. When the page lands on a login
 screen, the response says so and suggests `storageState`.
@@ -441,6 +467,47 @@ Example output:
 
 It ends with an `@axe-core/playwright` check for the spec, so the page stays fixed.
 
+### `audit-performance`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `url` | string | Page to measure (required) |
+| `throttle` | `none` \| `mobile` | `mobile` is Lighthouse's phone preset: 412×823 touch viewport, 4x CPU slowdown, slow 4G. Default `none` (desktop, unthrottled) |
+| `cpuSlowdown` | number | Override the CPU slowdown factor (1–20) |
+| `runs` | number | Load the page 1–5 times and report the median (default `1`); the LCP range is shown |
+| `budgets` | object | `{ lcpMs, cls, inpMs, tbtMs, fcpMs, ttfbMs, transferKb, requests }`, any subset. With budgets the verdict is pass/fail; without, metrics are rated against Google's thresholds |
+| `settleMs` | number | Keep observing after load for late images and shifts (default `1500`) |
+| `waitFor` / `waitUntil` / `timeoutMs` | — | As with `inspect-page` (`waitUntil` default `load`, `timeoutMs` per run, default `60000`) |
+| `storageState` / `headers` / `actions` / `routes` / `viewport` | — | [Page state](#page-state-signed-in-pages-headers-and-steps). Clicks and key presses in `actions` are measured as interactions (INP) |
+
+The metrics come from the browser's own performance entries (the same ones Lighthouse and
+the `web-vitals` library read) and the bytes from the DevTools protocol, so cross-origin
+sizes count too. Example output:
+
+```
+## ⚡ 3 of 6 metrics need work (CLS, INP, TBT)
+
+| Metric | Value | Rating |
+| --- | --- | --- |
+| LCP · largest contentful paint | 412 ms | 🟢 good |
+| CLS · cumulative layout shift | 0.109 | 🟠 needs improvement |
+| INP · slowest interaction (lab) | 360 ms | 🟠 needs improvement |
+| TBT · total blocking time | 306 ms | 🟠 needs improvement |
+
+### What to fix
+- **CLS 0.109**: these moved: `getByRole('img', { name: 'Summer sale' })`, `getByRole('button', { name: 'Add to cart' })`. Reserve their space (…)
+- **TBT 306 ms** from 2 long task(s), the longest 404 ms: split or defer JavaScript.
+- **INP 360 ms** on pointerdown on button: the handler blocks the next paint; yield (…)
+
+### Network
+**Transfer:** 302 kB in 4 requests · DOM: 13 nodes · JS heap: 10.0 MB
+**Render-blocking:**
+- stylesheet `http://localhost:4173/style.css` · 324 ms
+```
+
+It ends with a Playwright test that asserts LCP and CLS stay within budget. These are lab
+numbers from one headless Chromium; field data (CrUX, RUM) can differ.
+
 ### `suggest-fix`
 
 | Argument | Type | Description |
@@ -449,12 +516,18 @@ It ends with an `@axe-core/playwright` check for the spec, so the page stays fix
 | `apply` | boolean | Write the fix into the spec (default `false`: return the diff only) |
 | `verify` | boolean | After applying, re-run the test and revert the file if it still fails (default `true`) |
 | `allowExpectationUpdate` | boolean | Allow applying a changed expected text/value (default `false`, since it can hide a real regression) |
+| `candidate` | number | For a strict mode violation, which of the listed matches the test meant (1-based) |
 | `url` | string | Heal against this live page instead of the DOM snapshot in the failure trace |
 | `storageState` / `headers` | — | For `url`, as in [Page state](#page-state-signed-in-pages-headers-and-steps) |
 | `config` / `timeoutMs` / `projectRoot` | — | As with `run-test` |
 
-Two kinds of fix:
+Three kinds of fix:
 
+- **Ambiguous locator.** A strict mode violation ("resolved to 2 elements") lists each match
+  with the unique locator Playwright computed for it. When the broken locator matched by
+  substring (`name: 'Save'` hitting *Save* and *Save draft*), the exact-name match is picked
+  with `high` confidence. When the matches are equal (the same *Home* link in the header and
+  the footer), they are listed and you choose with `candidate`.
 - **Locator drift.** The broken locator is read from the error, its words are matched
   (with synonyms such as *btn → button*, *checkout → proceed to checkout*) against every
   element in the DOM at failure, and the best match's verified-unique locator replaces it.
@@ -760,7 +833,7 @@ browsers match Playwright 1.63. Mount your project at `/work`; its own
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
-| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, flaky, history, list), `inspect` (page, selector, accessibility, visual), `author` (list, page, selector, generate, run). All twelve tool definitions cost about 5.5k tokens of context per request; `core` costs about 2.2k |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, flaky, history, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All thirteen tool definitions cost about 7.3k tokens of context per request; `core` costs about 2.3k |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |
@@ -878,7 +951,7 @@ picks the right locator from the snapshot on the first try, which the server doe
 src/
 ├── index.ts            # bin entry point (--version/--help, main-module guard)
 ├── server.ts           # McpServer setup, tool registration, shutdown handling
-├── tools/              # the twelve tools, the probe script + shared plumbing
+├── tools/              # the thirteen tools, the probe script + shared plumbing
 ├── prompts.ts          # fix-failing-test, triage-flaky-tests
 ├── utils/              # playwright-runner, report-parser, project-detector, path-utils,
 │                       # logger, trace-reader (trace.zip → DOM/network/console),
@@ -927,10 +1000,13 @@ server over stdio against a live fixture app and a Playwright project under
 `e2e/fixture/`, then drives it exactly like an MCP client and asserts ~40 behaviours
 that only appear end-to-end:
 
-- initialize handshake, 12 tools, 2 prompts, spec tool annotations and object input schemas,
+- initialize handshake, 13 tools, 2 prompts, spec tool annotations and object input schemas,
 - verified locators, locator validation, signed-in pages (`storageState`) and page steps,
 - background runs with progress, run history views, and `suggest-fix` healing a drifted
-  locator and verifying it with a re-run (and refusing when the element is missing),
+  locator and an ambiguous one, verifying each with a re-run (and refusing when the
+  element is missing),
+- Web Vitals with budgets and phone throttling, and network mocks that force error and
+  empty states,
 - live DOM inspection, CSS selector validation (matches, zero matches, engine
   syntax, parse errors), dead-server detection,
 - visual regression: baseline → unchanged compare → `blue → red` diff detection,

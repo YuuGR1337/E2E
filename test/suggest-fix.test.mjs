@@ -4,8 +4,11 @@ import {
   brokenLocatorFromMessage,
   failingLine,
   findCallSpan,
+  findChainSpan,
   healConfidence,
   healTokensFor,
+  pickStrictMatch,
+  strictViolationFromMessage,
   unifiedDiff,
 } from '../dist/tools/suggest-fix.js';
 import { parseLocator } from '../dist/utils/locator-expr.js';
@@ -70,4 +73,47 @@ test('createProgressParser counts list-reporter lines across chunks', () => {
   assert.equal(last.done, 3);
   assert.equal(last.failed, 1);
   assert.match(last.last, /three$/);
+});
+
+const STRICT_ACTION = `Error: locator.click: Error: strict mode violation: getByRole('button', { name: 'Save' }) resolved to 2 elements:
+    1) <button>Save</button> aka getByRole('button', { name: 'Save', exact: true })
+    2) <button>Save draft</button> aka getByRole('button', { name: 'Save draft' })
+
+Call log:
+  - waiting for getByRole('button', { name: 'Save' })
+`;
+
+const STRICT_EXPECT = `Error: expect(locator).toBeVisible() failed
+
+Locator: getByRole('link', { name: 'Home' })
+Expected: visible
+Error: strict mode violation: getByRole('link', { name: 'Home' }) resolved to 2 elements:
+    1) <a href="#">Home</a> aka getByRole('navigation').getByRole('link', { name: 'Home' })
+    2) <a href="#">Home</a> aka getByRole('contentinfo').getByRole('link', { name: 'Home' })
+
+Call log:
+  - Expect "toBeVisible" getByRole('link', { name: 'Home' }) with timeout 2000ms
+`;
+
+test('strictViolationFromMessage reads the ambiguous locator and every match', () => {
+  const v = strictViolationFromMessage(STRICT_ACTION);
+  assert.equal(v.locator, "getByRole('button', { name: 'Save' })");
+  assert.equal(v.count, 2);
+  assert.deepEqual(v.matches.map((m) => m.locator), ["getByRole('button', { name: 'Save', exact: true })", "getByRole('button', { name: 'Save draft' })"]);
+  assert.equal(v.matches[1].html, '<button>Save draft</button>');
+  assert.equal(strictViolationFromMessage('Error: Timed out 5000ms waiting for expect(locator).toBeVisible()'), undefined);
+});
+
+test('pickStrictMatch picks the exact-name match and refuses to guess between equal ones', () => {
+  const picked = pickStrictMatch(strictViolationFromMessage(STRICT_ACTION));
+  assert.equal(picked.index, 0);
+  assert.match(picked.why, /named exactly "Save"/);
+  assert.equal(pickStrictMatch(strictViolationFromMessage(STRICT_EXPECT)), undefined);
+});
+
+test('findChainSpan covers a whole chained locator on the line', () => {
+  const line = `  await page.locator('form').getByRole("button", { name: 'Save' }).first().click();`;
+  const span = findChainSpan(line, parseLocator("locator('form').getByRole('button', { name: 'Save' }).first()"));
+  assert.equal(line.slice(span.start, span.end), `locator('form').getByRole("button", { name: 'Save' }).first()`);
+  assert.equal(findChainSpan(line, parseLocator("locator('form').getByText('Save')")), undefined);
 });

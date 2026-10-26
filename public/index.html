@@ -28,10 +28,10 @@
       <p><span class="ok">●</span> Endpoint is live:</p>
       <pre>https://playwright-e2e-mcp.vercel.app/api/mcp</pre>
 
-      <p>It speaks <strong>MCP Streamable HTTP</strong> and can expose the same twelve tools as the stdio server:</p>
+      <p>It speaks <strong>MCP Streamable HTTP</strong> and can expose the same thirteen tools as the stdio server:</p>
       <ul>
         <li><code>run-test</code>, <code>get-run-status</code>, <code>get-failure</code>, <code>suggest-fix</code>, <code>list-tests</code></li>
-        <li><code>inspect-page</code>, <code>validate-selector</code>, <code>audit-accessibility</code></li>
+        <li><code>inspect-page</code>, <code>validate-selector</code>, <code>audit-accessibility</code>, <code>audit-performance</code></li>
         <li><code>generate-e2e-test</code>, <code>compare-visual-state</code>, <code>diagnose-flaky</code>, <code>analyze-history</code></li>
       </ul>
 
@@ -46,7 +46,7 @@
         This hosted endpoint is for clients that only accept remote connectors (ChatGPT custom
         connectors, remote MCP clients). <strong>It requires a bearer token</strong>: a request
         without <code>Authorization: Bearer &lt;token&gt;</code> is answered
-        <code>401 {"error":"unauthorized"}</code>, and with it all twelve tools are served. (A
+        <code>401 {"error":"unauthorized"}</code>, and with it all thirteen tools are served. (A
         self-hosted bridge started without <code>PW_MCP_HTTP_TOKEN</code> instead serves just the
         read-only tools, <code>list-tests</code>, <code>get-failure</code> and <code>analyze-history</code>.)
       </p>

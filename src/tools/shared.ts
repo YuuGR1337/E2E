@@ -313,6 +313,8 @@ export function failureHint(kind: FailureKind): string {
 /* Page state: login sessions and steps to reach a UI state            */
 /* ------------------------------------------------------------------ */
 
+const MAX_MOCK_BODY = 200_000;
+
 const ACTION_TYPES = ['goto', 'click', 'dblclick', 'hover', 'fill', 'press', 'check', 'uncheck', 'select', 'wait'] as const;
 
 export const pageActionSchema = z.object({
@@ -332,10 +334,31 @@ export const sessionShape = {
   headers: z.record(z.string(), z.string()).optional().describe('Extra HTTP headers, e.g. Authorization'),
 };
 
+/**
+ * A network mock, applied with context.route before the page loads: fulfil
+ * with a canned response, abort, or only delay the real request.
+ */
+export const routeMockSchema = z.object({
+  url: z.string().min(1).max(500).describe("Glob, e.g. '**/api/cart'"),
+  method: z.string().max(10).optional(),
+  status: z.number().int().min(100).max(599).optional(),
+  json: z.unknown().optional(),
+  body: z.string().max(MAX_MOCK_BODY).optional(),
+  contentType: z.string().max(100).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  abort: z.boolean().optional(),
+  delayMs: z.number().int().min(0).max(10_000).optional(),
+});
+
 /** Inputs shared by every tool that opens a page. */
 export const pageStateShape = {
   ...sessionShape,
   actions: z.array(pageActionSchema).max(20).optional().describe('Steps run after load to reach a state (modal, step 3)'),
+  routes: z
+    .array(routeMockSchema)
+    .max(20)
+    .optional()
+    .describe('Network mocks, first match wins: json/body/status fulfil, abort fails, delayMs alone slows the real request'),
   viewport: z
     .object({ width: z.number().int().min(200).max(4_000), height: z.number().int().min(200).max(4_000) })
     .optional(),
@@ -345,14 +368,79 @@ export interface PageStateInput {
   storageState?: string;
   headers?: Record<string, string>;
   actions?: Array<z.infer<typeof pageActionSchema>>;
+  routes?: Array<z.infer<typeof routeMockSchema>>;
   viewport?: { width: number; height: number };
+}
+
+export interface ResolvedRouteMock {
+  url: string;
+  label: string;
+  method?: string;
+  status?: number;
+  body?: string;
+  contentType?: string;
+  headers?: Record<string, string>;
+  abort?: boolean;
+  delayMs?: number;
 }
 
 export interface ResolvedPageState {
   storageState?: string;
   headers?: Record<string, string>;
   actions?: Array<{ type: string; label: string; locator?: LocatorCall[]; value?: string; url?: string; ms?: number }>;
+  routes?: ResolvedRouteMock[];
   viewport?: { width: number; height: number };
+}
+
+function assertHeaders(headers: Record<string, string>, what: string): void {
+  for (const [name, value] of Object.entries(headers)) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value)) {
+      throw new PlaywrightMcpError(`Invalid ${what} "${name}"`, 'INVALID_PATH', {
+        hint: 'Header names must be tokens and values must be single-line.',
+      });
+    }
+  }
+}
+
+/** Validate network mocks and turn each into a plain fulfil/abort/delay spec. */
+export function resolveRouteMocks(routes: NonNullable<PageStateInput['routes']>): ResolvedRouteMock[] {
+  return routes.map((route, i) => {
+    const step = `routes[${i}] (${route.url})`;
+    const method = route.method?.trim().toUpperCase();
+    if (method !== undefined && !/^[A-Z]+$/.test(method)) {
+      throw new PlaywrightMcpError(`${step}: "${route.method}" is not an HTTP method`, 'INVALID_PATH');
+    }
+    if (route.json !== undefined && route.body !== undefined) {
+      throw new PlaywrightMcpError(`${step}: pass json or body, not both`, 'INVALID_PATH');
+    }
+    if (route.abort && (route.json !== undefined || route.body !== undefined || route.status !== undefined)) {
+      throw new PlaywrightMcpError(`${step}: abort cannot be combined with a response`, 'INVALID_PATH');
+    }
+    if (route.headers) assertHeaders(route.headers, `${step} header`);
+    let body = route.body;
+    let contentType = route.contentType;
+    if (route.json !== undefined) {
+      body = JSON.stringify(route.json);
+      if (body === undefined || body.length > MAX_MOCK_BODY) {
+        throw new PlaywrightMcpError(`${step}: json must be serialisable and under ${MAX_MOCK_BODY} characters`, 'INVALID_PATH');
+      }
+      contentType ??= 'application/json';
+    }
+    const fulfil = body !== undefined || route.status !== undefined;
+    const status = fulfil ? (route.status ?? 200) : undefined;
+    const what = route.abort ? 'aborted' : fulfil ? `→ ${status}${route.json !== undefined ? ' JSON' : ''}` : 'passed through';
+    return {
+      url: route.url,
+      label: `${method ? `${method} ` : ''}${route.url} ${what}${route.delayMs ? ` after ${route.delayMs}ms` : ''}`,
+      method,
+      status,
+      body,
+      contentType,
+      headers: route.headers,
+      abort: route.abort || undefined,
+      delayMs: route.delayMs,
+    };
+  });
 }
 
 const NEEDS_LOCATOR = new Set(['click', 'dblclick', 'hover', 'fill', 'check', 'uncheck', 'select']);
@@ -398,16 +486,11 @@ export async function resolvePageState(
     out.storageState = toNativePath(absolute);
   }
   if (input.headers && Object.keys(input.headers).length > 0) {
-    for (const [name, value] of Object.entries(input.headers)) {
-      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value)) {
-        throw new PlaywrightMcpError(`Invalid HTTP header "${name}"`, 'INVALID_PATH', {
-          hint: 'Header names must be tokens and values must be single-line.',
-        });
-      }
-    }
+    assertHeaders(input.headers, 'HTTP header');
     out.headers = input.headers;
   }
   if (input.viewport) out.viewport = input.viewport;
+  if (input.routes && input.routes.length > 0) out.routes = resolveRouteMocks(input.routes);
   if (input.actions && input.actions.length > 0) {
     out.actions = [];
     let current = entryUrl;
@@ -452,7 +535,19 @@ export function describePageState(state: ResolvedPageState, root: string): strin
   if (state.storageState) parts.push(`session \`${relativeToRoot(root, state.storageState)}\``);
   if (state.headers) parts.push(`${Object.keys(state.headers).length} extra header(s)`);
   if (state.actions?.length) parts.push(`${state.actions.length} step(s) run first`);
+  if (state.routes?.length) parts.push(`${state.routes.length} mocked route(s)`);
   return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+/** One line per network mock with how often it matched; unmatched mocks are flagged. */
+export function describeRouteHits(state: ResolvedPageState, hits: number[] | undefined): string[] {
+  if (!state.routes?.length) return [];
+  return state.routes.map((route, i) => {
+    const n = hits?.[i] ?? 0;
+    return n > 0
+      ? `- \`${route.label}\`: matched ${n} request${n === 1 ? '' : 's'}`
+      : `- ⚠️ \`${route.label}\`: matched **no** request; check the glob (e.g. \`**/api/cart*\`) and method`;
+  });
 }
 
 /** A hint when an unauthenticated page landed on a login screen. */
@@ -467,7 +562,7 @@ export function loginHint(finalUrl: string | undefined, state: ResolvedPageState
 /* ------------------------------------------------------------------ */
 
 export interface BrowserScriptConfig extends Omit<ResolvedPageState, never> {
-  mode: 'inspect' | 'validate' | 'screenshot' | 'heal' | 'a11y';
+  mode: 'inspect' | 'validate' | 'screenshot' | 'heal' | 'a11y' | 'perf';
   projectRoot: string;
   /** Page to open; omitted when rendering a snapshot. */
   url?: string;
@@ -497,7 +592,21 @@ export interface BrowserScriptConfig extends Omit<ResolvedPageState, never> {
   axeSourcePath?: string;
   axeTags?: string[];
   maxNodes?: number;
+  /** perf: CPU slowdown factor and network profile (CDP emulation). */
+  cpuThrottle?: number;
+  network?: NetworkProfile;
+  /** perf: emulate a phone (isMobile, touch, device pixel ratio). */
+  mobile?: boolean;
+  /** perf: ms to keep observing after load so late shifts and LCP land. */
+  settleMs?: number;
   startedAt: number;
+}
+
+/** Network emulation in Chrome DevTools terms (throughput in bytes/s). */
+export interface NetworkProfile {
+  latencyMs: number;
+  downloadBps: number;
+  uploadBps: number;
 }
 
 export interface BrowserScriptData {
@@ -517,6 +626,48 @@ export interface BrowserScriptData {
   durationMs?: number;
   /** mode 'a11y': axe-core violations; node.element indexes `elements`. */
   a11y?: AccessibilityScan;
+  /** mode 'perf': lab Web Vitals and resource stats; element fields index `elements`. */
+  perf?: PerformanceScan;
+  /** Requests each network mock in `routes` handled, by index. */
+  routeHits?: number[];
+}
+
+export interface PerformanceResource {
+  url: string;
+  type: string;
+  transferBytes: number;
+  durationMs: number;
+  renderBlocking: boolean;
+}
+
+export interface PerformanceScan {
+  ttfbMs?: number;
+  fcpMs?: number;
+  lcpMs?: number;
+  /** Index into `elements` of the LCP element, -1 when unknown. */
+  lcpElement: number;
+  lcpTag?: string;
+  lcpUrl?: string;
+  cls: number;
+  /** Elements that moved most in the worst layout-shift window. */
+  shiftElements: number[];
+  tbtMs: number;
+  longTasks: number;
+  longestTaskMs: number;
+  /** Slowest interaction during `actions` (lab INP), when there were any. */
+  inpMs?: number;
+  inpTarget?: string;
+  domContentLoadedMs?: number;
+  loadMs?: number;
+  requests: number;
+  transferBytes: number;
+  byType: Array<{ type: string; requests: number; transferBytes: number }>;
+  largest: PerformanceResource[];
+  renderBlocking: PerformanceResource[];
+  thirdPartyBytes: number;
+  thirdPartyOrigins: number;
+  domNodes: number;
+  jsHeapBytes?: number;
 }
 
 export interface AccessibilityNode {

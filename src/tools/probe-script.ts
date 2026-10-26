@@ -15,6 +15,13 @@
  *               on the live page or on a DOM snapshot taken from a trace
  * - a11y        run axe-core on the page (or a scoped part) and describe the
  *               offending elements, each with a verified locator
+ * - perf        lab Web Vitals (LCP, CLS, TBT, INP during actions, FCP, TTFB)
+ *               and the network cost per resource type, optionally under
+ *               CPU and network throttling; the LCP element and the elements
+ *               that shifted come back with verified locators
+ *
+ * Any mode that navigates applies the caller's network mocks (cfg.routes)
+ * first and reports how many requests each one handled.
  *
  * Every element the script reports carries Playwright locators that were
  * proven, in this same page, to resolve to exactly that one element.
@@ -430,6 +437,152 @@ async function runActions(page, actions, timeout) {
   return done;
 }
 
+/* ---------------- performance (mode: perf) ---------------- */
+
+// Runs in every new document before its own scripts, so no early paint,
+// shift or long task is missed.
+function perfInit() {
+  const P = { lcp: null, shifts: [], longTasks: [], events: [] };
+  Object.defineProperty(window, '__pwmcpPerf', { value: P, configurable: true });
+  const watch = (type, fn, extra) => {
+    try {
+      new PerformanceObserver((list) => list.getEntries().forEach(fn)).observe(Object.assign({ type: type, buffered: true }, extra || {}));
+    } catch (err) { /* entry type not supported */ }
+  };
+  watch('largest-contentful-paint', (e) => { P.lcp = e; });
+  watch('layout-shift', (e) => { if (!e.hadRecentInput) P.shifts.push(e); });
+  watch('longtask', (e) => { P.longTasks.push({ start: e.startTime, duration: e.duration }); });
+  watch('event', (e) => { if (e.interactionId) P.events.push({ id: e.interactionId, duration: e.duration, name: e.name, target: e.target }); }, { durationThreshold: 16 });
+}
+
+function collectPerf() {
+  const h = window.__pwmcp;
+  const P = window.__pwmcpPerf || { lcp: null, shifts: [], longTasks: [], events: [] };
+  h.els = [];
+  const keep = (el) => {
+    if (!el || el.nodeType !== 1 || !el.isConnected) return -1;
+    const at = h.els.indexOf(el);
+    if (at >= 0) return at;
+    h.els.push(el);
+    return h.els.length - 1;
+  };
+  const nav = performance.getEntriesByType('navigation')[0];
+  const fcpEntry = performance.getEntriesByName('first-contentful-paint')[0];
+  const fcp = fcpEntry ? fcpEntry.startTime : undefined;
+
+  // CLS: the worst session window (shifts < 1s apart, window <= 5s).
+  let cls = 0, win = 0, winStart = 0, prev = 0, cur = [], worst = [];
+  for (const s of P.shifts) {
+    if (cur.length && (s.startTime - prev > 1000 || s.startTime - winStart > 5000)) { win = 0; cur = []; }
+    if (!cur.length) winStart = s.startTime;
+    win += s.value; cur.push(s); prev = s.startTime;
+    if (win > cls) { cls = win; worst = cur.slice(); }
+  }
+  const shiftElements = [];
+  for (const s of worst) {
+    for (const src of s.sources || []) {
+      const i = keep(src.node);
+      if (i >= 0 && !shiftElements.includes(i) && shiftElements.length < 5) shiftElements.push(i);
+    }
+  }
+
+  // TBT: blocking time of long tasks after first paint.
+  let tbt = 0, longest = 0;
+  for (const t of P.longTasks) {
+    longest = Math.max(longest, t.duration);
+    if (fcp === undefined || t.start >= fcp) tbt += Math.max(0, t.duration - 50);
+  }
+
+  // INP (lab): the slowest interaction, events grouped by interactionId.
+  const byInteraction = new Map();
+  for (const e of P.events) {
+    const prior = byInteraction.get(e.id);
+    if (!prior || e.duration > prior.duration) byInteraction.set(e.id, e);
+  }
+  let inp;
+  for (const e of byInteraction.values()) if (!inp || e.duration > inp.duration) inp = e;
+  let inpTarget;
+  if (inp) {
+    const i = keep(inp.target);
+    inpTarget = inp.name + (i >= 0 ? ' on ' + h.describe(inp.target).tag : '');
+  }
+
+  const lcpEl = P.lcp ? P.lcp.element : null;
+  const lcpElement = keep(lcpEl);
+  let lcpMs;
+  if (P.lcp) lcpMs = P.lcp.renderTime || P.lcp.loadTime || P.lcp.startTime;
+
+  const timings = {};
+  for (const r of performance.getEntriesByType('resource')) {
+    timings[r.name] = { duration: r.duration, blocking: r.renderBlockingStatus === 'blocking' };
+  }
+  let heap;
+  try { heap = performance.memory ? performance.memory.usedJSHeapSize : undefined; } catch (err) { /* not exposed */ }
+  return {
+    title: document.title,
+    finalUrl: location.href,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+    elements: h.els.map((el) => h.describe(el)),
+    perf: {
+      ttfbMs: nav ? nav.responseStart : undefined,
+      fcpMs: fcp,
+      lcpMs: lcpMs,
+      lcpElement: lcpElement,
+      lcpTag: lcpEl ? lcpEl.tagName.toLowerCase() : undefined,
+      lcpUrl: P.lcp && P.lcp.url ? String(P.lcp.url).slice(0, 300) : undefined,
+      cls: Math.round(cls * 1000) / 1000,
+      shiftElements: shiftElements,
+      tbtMs: Math.round(tbt),
+      longTasks: P.longTasks.length,
+      longestTaskMs: Math.round(longest),
+      inpMs: inp ? Math.round(inp.duration) : undefined,
+      inpTarget: inpTarget,
+      domContentLoadedMs: nav && nav.domContentLoadedEventEnd ? nav.domContentLoadedEventEnd : undefined,
+      loadMs: nav && nav.loadEventEnd ? nav.loadEventEnd : undefined,
+      domNodes: document.getElementsByTagName('*').length,
+      jsHeapBytes: heap,
+    },
+    timings: timings,
+  };
+}
+
+function registrableDomain(host) {
+  const parts = String(host).split('.');
+  return parts.length <= 2 ? host : parts.slice(-2).join('.');
+}
+
+function summariseRequests(requests, timings, pageUrl) {
+  const site = registrableDomain(new URL(pageUrl).hostname);
+  const byType = {};
+  const all = [];
+  const thirdParty = new Set();
+  let thirdPartyBytes = 0;
+  let total = 0;
+  for (const r of requests.values()) {
+    if (!r.url || /^data:|^blob:/.test(r.url)) continue;
+    const bytes = r.bytes || 0;
+    total += bytes;
+    const type = (r.type || 'Other').toLowerCase();
+    if (!byType[type]) byType[type] = { type: type, requests: 0, transferBytes: 0 };
+    byType[type].requests += 1;
+    byType[type].transferBytes += bytes;
+    let host = '';
+    try { host = new URL(r.url).hostname; } catch (err) { /* opaque */ }
+    if (host && registrableDomain(host) !== site) { thirdParty.add(host); thirdPartyBytes += bytes; }
+    const t = timings[r.url] || {};
+    all.push({ url: r.url.slice(0, 200), type: type, transferBytes: bytes, durationMs: Math.round(t.duration || 0), renderBlocking: !!t.blocking });
+  }
+  return {
+    requests: all.length,
+    transferBytes: total,
+    byType: Object.values(byType).sort((a, b) => b.transferBytes - a.transferBytes),
+    largest: all.slice().sort((a, b) => b.transferBytes - a.transferBytes).slice(0, 5),
+    renderBlocking: all.filter((r) => r.renderBlocking).slice(0, 8),
+    thirdPartyBytes: thirdPartyBytes,
+    thirdPartyOrigins: thirdParty.size,
+  };
+}
+
 (async () => {
   const { createRequire } = require('node:module');
   const req = createRequire(cfg.projectRoot + '/package.json');
@@ -466,11 +619,57 @@ async function runActions(page, actions, timeout) {
     }
     browser = await pw.chromium.launch(launchOptions);
     const contextOptions = { viewport: cfg.viewport || { width: 1280, height: 720 } };
+    if (cfg.mobile) Object.assign(contextOptions, { isMobile: true, hasTouch: true, deviceScaleFactor: 1.75 });
     if (cfg.storageState) contextOptions.storageState = cfg.storageState;
     if (cfg.headers) contextOptions.extraHTTPHeaders = cfg.headers;
     if (cfg.testIdAttribute) pw.selectors.setTestIdAttribute(cfg.testIdAttribute);
     const context = await browser.newContext(contextOptions);
+
+    // Network mocks. Playwright runs the most recently registered handler
+    // first, so register in reverse to make the first listed mock win.
+    const routeHits = (cfg.routes || []).map(() => 0);
+    if (cfg.routes && cfg.routes.length && !cfg.snapshotHtmlPath) {
+      for (let i = cfg.routes.length - 1; i >= 0; i -= 1) {
+        const r = cfg.routes[i];
+        await context.route(r.url, async (route) => {
+          if (r.method && route.request().method() !== r.method) return route.fallback();
+          routeHits[i] += 1;
+          if (r.delayMs) await new Promise((resolve) => setTimeout(resolve, r.delayMs));
+          if (r.abort) return route.abort('failed');
+          if (r.status !== undefined) {
+            return route.fulfill({ status: r.status, body: r.body === undefined ? '' : r.body, contentType: r.contentType, headers: r.headers });
+          }
+          return route.fallback();
+        });
+      }
+    }
+
+    if (cfg.mode === 'perf') await context.addInitScript(perfInit);
     const page = await context.newPage();
+
+    // perf: count bytes per request over CDP (cross-origin sizes included)
+    // and apply CPU / network throttling before the first byte.
+    const requests = new Map();
+    if (cfg.mode === 'perf') {
+      const cdp = await context.newCDPSession(page);
+      cdp.on('Network.responseReceived', (e) => {
+        if (requests.size < 2000 || requests.has(e.requestId)) requests.set(e.requestId, Object.assign(requests.get(e.requestId) || {}, { url: e.response.url, type: e.type }));
+      });
+      cdp.on('Network.loadingFinished', (e) => {
+        const r = requests.get(e.requestId);
+        if (r) r.bytes = e.encodedDataLength;
+      });
+      await cdp.send('Network.enable');
+      if (cfg.network) {
+        await cdp.send('Network.emulateNetworkConditions', {
+          offline: false,
+          latency: cfg.network.latencyMs,
+          downloadThroughput: cfg.network.downloadBps,
+          uploadThroughput: cfg.network.uploadBps,
+        });
+      }
+      if (cfg.cpuThrottle && cfg.cpuThrottle > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: cfg.cpuThrottle });
+    }
 
     const consoleMessages = [];
     page.on('console', (msg) => {
@@ -488,7 +687,15 @@ async function runActions(page, actions, timeout) {
     } else {
       await page.goto(cfg.url, { waitUntil: cfg.waitUntil || 'domcontentloaded', timeout: cfg.gotoTimeout || 15000 });
       if (cfg.waitFor) await page.locator(cfg.waitFor).first().waitFor({ state: 'visible', timeout: cfg.waitTimeout || 5000 });
-      if (cfg.actions && cfg.actions.length) actionsDone = await runActions(page, cfg.actions, cfg.actionTimeout || 10000);
+      // perf: let late images, fonts and shifts land before anything else.
+      if (cfg.mode === 'perf' && cfg.settleMs) await page.waitForTimeout(cfg.settleMs);
+      if (cfg.actions && cfg.actions.length) {
+        actionsDone = await runActions(page, cfg.actions, cfg.actionTimeout || 10000);
+        if (cfg.mode === 'perf') {
+          await page.waitForLoadState('load', { timeout: cfg.waitTimeout || 5000 }).catch(() => undefined);
+          await page.waitForTimeout(Math.min(cfg.settleMs || 1000, 2000));
+        }
+      }
     }
 
     if (cfg.mode === 'screenshot') {
@@ -508,6 +715,7 @@ async function runActions(page, actions, timeout) {
           matchCount: 0,
           elements: [],
           actionsDone: actionsDone,
+          routeHits: routeHits,
           durationMs: Date.now() - cfg.startedAt,
         },
       });
@@ -585,6 +793,13 @@ async function runActions(page, actions, timeout) {
         };
       }, { tags: cfg.axeTags || [], selector: cfg.selector, maxNodes: cfg.maxNodes || 3 });
       await attachLocators(page, data.elements, 40, 2);
+    } else if (cfg.mode === 'perf') {
+      const collected = await page.evaluate(collectPerf);
+      const network = summariseRequests(requests, collected.timings, page.url());
+      delete collected.timings;
+      Object.assign(collected.perf, network);
+      data = Object.assign(collected, { matchCount: 0, elementCount: collected.elements.length });
+      await attachLocators(page, data.elements, 12, 2);
     } else if (cfg.mode === 'heal') {
       data = await page.evaluate((input) => {
         const h = window.__pwmcp;
@@ -672,6 +887,7 @@ async function runActions(page, actions, timeout) {
 
     data.consoleMessages = consoleMessages;
     data.actionsDone = actionsDone;
+    data.routeHits = routeHits;
     data.finalUrl = data.finalUrl || page.url();
     data.durationMs = Date.now() - cfg.startedAt;
     send({ ok: true, data: data });

@@ -32,6 +32,7 @@ const fixtureRoot = path.join(root, 'e2e', 'fixture');
 const EXPECTED_TOOLS = [
   'analyze-history',
   'audit-accessibility',
+  'audit-performance',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',

@@ -3,11 +3,16 @@
  * patch for the spec, optionally apply it, and prove it by re-running the
  * test (reverting the file when the re-run still fails).
  *
- * Handles the two most common E2E breakages:
+ * Handles the three most common E2E breakages:
  * - Locator drift: the element is still on the page but its test id, text
  *   or structure changed. The broken locator's words are matched against
  *   the DOM at failure (from the Playwright trace, or a live URL), and the
  *   best match gets a Playwright locator proven unique on that page.
+ * - Strict mode violations: the locator now matches several elements
+ *   (a "Save" button next to "Save draft", the same link in the header and
+ *   the footer). Playwright prints a unique locator for each match; the one
+ *   whose name is an exact match is picked, otherwise the caller picks with
+ *   `candidate`.
  * - Copy changes in text assertions (toHaveText & co): the expected string
  *   is replaced with what the page shows. That can hide a real regression,
  *   so it is applied only with allowExpectationUpdate.
@@ -56,6 +61,12 @@ const suggestFixInput = z.object({
   url: z.string().optional().describe('Heal against this live page instead of the trace snapshot'),
   ...sessionShape,
   apply: z.boolean().optional().describe('Write the fix (default: diff only)'),
+  candidate: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe('Strict mode violation: which of the listed matches the test meant (1-based)'),
   verify: z.boolean().optional().describe('Re-run after applying; revert if still failing (default true)'),
   allowExpectationUpdate: z.boolean().optional().describe('Allow applying changed expected text (can hide regressions)'),
   config: z.string().optional().describe('playwright.config path or 1-based index'),
@@ -84,6 +95,122 @@ export function brokenLocatorFromMessage(message: string): string | undefined {
     }
   }
   return undefined;
+}
+
+export interface StrictViolation {
+  /** The locator that matched more than one element, as printed. */
+  locator: string;
+  count: number;
+  /** Each match Playwright listed: its HTML and the unique locator it printed ("aka"). */
+  matches: Array<{ html: string; locator: string }>;
+}
+
+/** Parse Playwright's "strict mode violation: … resolved to N elements:" block. */
+export function strictViolationFromMessage(message: string): StrictViolation | undefined {
+  const head = /strict mode violation:\s+(.+?)\s+resolved to (\d+) elements:?/.exec(message);
+  if (!head) return undefined;
+  const matches: StrictViolation['matches'] = [];
+  const tail = message.slice(head.index + head[0].length).split(/\r?\n/);
+  for (const raw of tail) {
+    const m = /^\s*\d+\)\s+(.*?)\s+aka\s+((?:getBy\w+|locator)\(.*)$/.exec(raw);
+    if (!m) {
+      if (matches.length > 0 && raw.trim() !== '' && !/^\s*\d+\)/.test(raw)) break;
+      continue;
+    }
+    try {
+      parseLocator(m[2].trim());
+      matches.push({ html: m[1].trim(), locator: m[2].trim() });
+    } catch {
+      /* not a locator we can write back; skip it */
+    }
+  }
+  return { locator: head[1].trim(), count: Number(head[2]), matches };
+}
+
+/** The name or text a locator's last call asks for, when it is a plain string. */
+function wantedName(chain: LocatorCall[]): string | undefined {
+  const last = chain[chain.length - 1];
+  if (!last) return undefined;
+  if (last.method === 'getByRole') {
+    const options = last.args[1];
+    if (options && typeof options === 'object' && 'name' in options && typeof options.name === 'string') return options.name;
+    return undefined;
+  }
+  if (last.method !== 'locator' && typeof last.args[0] === 'string') return last.args[0];
+  return undefined;
+}
+
+function isExact(chain: LocatorCall[]): boolean {
+  const last = chain[chain.length - 1];
+  return last.args.some((arg) => typeof arg === 'object' && arg !== null && 'exact' in arg && arg.exact === true);
+}
+
+function visibleText(html: string): string {
+  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Which match the broken locator meant, when the evidence says so: a
+ * substring name ("Save") hitting a longer one ("Save draft") means the
+ * match whose name is exactly that text.
+ */
+export function pickStrictMatch(violation: StrictViolation): { index: number; why: string } | undefined {
+  let broken: LocatorCall[];
+  try {
+    broken = parseLocator(violation.locator);
+  } catch {
+    return undefined;
+  }
+  const name = wantedName(broken);
+  if (name === undefined || isExact(broken)) return undefined;
+  const wanted = name.trim().toLowerCase();
+  const exact = violation.matches
+    .map((match, index) => ({ match, index, chain: parseLocator(match.locator) }))
+    .filter(({ match, chain }) => {
+      const candidateName = wantedName(chain);
+      if (candidateName !== undefined && isExact(chain)) return candidateName.trim().toLowerCase() === wanted;
+      return visibleText(match.html).toLowerCase() === wanted;
+    });
+  if (exact.length !== 1) return undefined;
+  return {
+    index: exact[0].index,
+    why: `\`${violation.locator}\` matches by substring, so it also hits ${violation.count - 1} other element(s). Only match ${exact[0].index + 1} is named exactly "${name}", and Playwright reports \`${exact[0].match.locator}\` as its unique locator.`,
+  };
+}
+
+/** Span of a whole locator chain on a line, from its first call to its last. */
+export function findChainSpan(line: string, chain: LocatorCall[]): { start: number; end: number } | undefined {
+  const first = findCallSpan(line, chain[0]);
+  if (!first) return undefined;
+  let end = first.end;
+  for (const call of chain.slice(1)) {
+    const rest = line.slice(end);
+    const next = /^\s*\.\s*(\w+)\s*\(/.exec(rest);
+    if (!next || next[1] !== call.method) return undefined;
+    let depth = 0;
+    let quoteChar: string | null = null;
+    let closed = -1;
+    for (let i = end + next[0].length - 1; i < line.length; i += 1) {
+      const ch = line[i];
+      if (quoteChar) {
+        if (ch === '\\') i += 1;
+        else if (ch === quoteChar) quoteChar = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') quoteChar = ch;
+      else if (ch === '(') depth += 1;
+      else if (ch === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          closed = i + 1;
+          break;
+        }
+      }
+    }
+    if (closed < 0) return undefined;
+    end = closed;
+  }
+  return { start: first.start, end };
 }
 
 const SYNONYMS: Record<string, string[]> = {
@@ -305,7 +432,7 @@ function renderHeader(failure: TestFailure, index: number, total: number): strin
 export const suggestFixTool = {
   name: 'suggest-fix',
   description:
-    "Patch a failure from the last run: a drifted locator is matched against the DOM at failure (trace, or live url) and replaced with one proven unique; changed copy gets the new expected text. Returns a diff and confidence; apply: true writes it, re-runs the test and reverts if still red. Refuses when the element is truly missing (app bug).",
+    "Patch a failure from the last run: a drifted locator is matched against the DOM at failure (trace, or live url) and replaced with one proven unique; a locator that matches several elements (strict mode) gets the unique one for the intended match; changed copy gets the new expected text. Returns a diff and confidence; apply: true writes it, re-runs the test and reverts if still red. Refuses when the element is truly missing (app bug).",
   inputSchema: suggestFixSchema,
   handler: async (args: SuggestFixInput, ctx: ToolContext): Promise<ToolResponse> =>
     guard('suggest-fix', async () => {
@@ -336,8 +463,57 @@ export const suggestFixTool = {
       let proposal: Proposal | undefined;
       const notes: string[] = [];
 
-      // 1. Locator drift.
-      const brokenText = brokenLocatorFromMessage(failure.message);
+      // 1. Strict mode violation: the locator matches several elements.
+      const strict = strictViolationFromMessage(failure.message);
+      if (strict) {
+        const line = lines[lineNo - 1] ?? '';
+        let brokenChain: LocatorCall[] | undefined;
+        try {
+          brokenChain = parseLocator(strict.locator);
+        } catch {
+          brokenChain = undefined;
+        }
+        const span = brokenChain ? findChainSpan(line, brokenChain) : undefined;
+        const picked = pickStrictMatch(strict);
+        const chosen =
+          args.candidate !== undefined
+            ? args.candidate <= strict.matches.length
+              ? { index: args.candidate - 1, why: `You picked match ${args.candidate}; Playwright reports \`${strict.matches[args.candidate - 1].locator}\` as its unique locator.` }
+              : undefined
+            : picked;
+        const listing = strict.matches.map((m, i) => `${i + 1}. \`${m.locator}\` · \`${clipLines(m.html, 1, 120)}\``);
+        if (args.candidate !== undefined && !chosen) {
+          throw new PlaywrightMcpError(`candidate ${args.candidate} is out of range: Playwright listed ${strict.matches.length} match(es)`, 'INVALID_PATH', {
+            hint: 'Call suggest-fix without candidate to see the list.',
+          });
+        }
+        if (!chosen) {
+          notes.push(
+            `**\`${strict.locator}\` matches ${strict.count} elements** (strict mode violation), and nothing says which one the test meant:`,
+            '',
+            ...listing,
+            '',
+            'Call **suggest-fix** again with `candidate: <n>` to use that unique locator (and `apply: true` to write and verify it). If the duplicates are a bug (a dialog rendered twice, a stale list item), fix the app instead.',
+          );
+        } else if (!span) {
+          notes.push(
+            `Use \`${strict.matches[chosen.index].locator}\` for \`${strict.locator}\`, but it could not be found on line ${lineNo} of \`${failure.file}\` to patch automatically. Replace it by hand.`,
+          );
+        } else {
+          proposal = {
+            kind: 'locator',
+            confidence: args.candidate !== undefined ? 'medium' : 'high',
+            lineNo,
+            before: line,
+            after: `${line.slice(0, span.start)}${strict.matches[chosen.index].locator}${line.slice(span.end)}`,
+            why: `Strict mode violation: ${chosen.why}`,
+            alternatives: strict.matches.filter((_, i) => i !== chosen.index).map((m) => m.locator).slice(0, 3),
+          };
+        }
+      }
+
+      // 2. Locator drift.
+      const brokenText = strict ? undefined : brokenLocatorFromMessage(failure.message);
       if (brokenText) {
         const chain = parseLocator(brokenText);
         const heal = healTokensFor(chain);
@@ -424,8 +600,8 @@ export const suggestFixTool = {
         }
       }
 
-      // 2. Changed copy in a text/value assertion.
-      if (!proposal) {
+      // 3. Changed copy in a text/value assertion.
+      if (!proposal && !strict) {
         const expectation = await proposeExpectationFix(failure, lines, lineNo);
         if (expectation) proposal = expectation;
       }
@@ -433,7 +609,7 @@ export const suggestFixTool = {
       if (!proposal) {
         if (notes.length === 0) {
           notes.push(
-            `No automatic fix applies to this \`${failure.failureKind}\` failure: suggest-fix patches broken locators and changed expected text. Use **get-failure** for the trace, then edit by hand.`,
+            `No automatic fix applies to this \`${failure.failureKind}\` failure: suggest-fix patches broken or ambiguous locators and changed expected text. Use **get-failure** for the trace, then edit by hand.`,
           );
         }
         out.push(...notes);
@@ -487,16 +663,23 @@ export const suggestFixTool = {
       const detection = await detectProject(root);
       const configPath = resolveConfigSelection(detection, args.config);
       const target = `${specPath}${failure.line ? `:${failure.line}` : ''}`;
-      const result: RunTestResult = await runTests({
-        projectRoot: root,
-        configPath,
-        testFiles: [target],
-        project: failure.project,
-        retries: 0,
-        retryOnFailure: false,
-        timeoutMs: args.timeoutMs,
-        signal: ctx.signal,
-      });
+      let result: RunTestResult;
+      try {
+        result = await runTests({
+          projectRoot: root,
+          configPath,
+          testFiles: [target],
+          project: failure.project || undefined,
+          retries: 0,
+          retryOnFailure: false,
+          timeoutMs: args.timeoutMs,
+          signal: ctx.signal,
+        });
+      } catch (err) {
+        // The re-run could not even start: never leave an unverified edit behind.
+        await writeFileInsideRoot(specPath, source, root);
+        throw err;
+      }
       ctx.store.setLastRun({ projectRoot: root, result, at: Date.now() });
       await recordRun(root, result, 'suggest-fix').catch(() => undefined);
 
