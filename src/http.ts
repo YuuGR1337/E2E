@@ -24,6 +24,8 @@ import { setBlockPrivateUrls } from './utils/url-policy.js';
 import { logger } from './utils/logger.js';
 
 /** Mirrors the SDK's default POST body bound, so oversized bodies die early. */
+export { provideServerlessChromium } from './utils/serverless-chromium.js';
+
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 export interface McpHttpHandlerOptions {

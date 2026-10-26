@@ -129,7 +129,7 @@ test('plugin, marketplace and Gemini manifests agree with package.json', () => {
   assert.ok(existsSync(new URL(`../${gemini.contextFileName}`, import.meta.url)));
 });
 
-test('the hosted bridge explains a missing browser instead of suggesting an install', async () => {
+test('the hosted bridge explains it cannot run tests instead of suggesting an install', async () => {
   const { toolError } = await import('../dist/tools/shared.js');
   const { missingPlaywrightMessage } = await import('../dist/utils/project-detector.js');
   const saved = process.env.VERCEL;
@@ -138,7 +138,8 @@ test('the hosted bridge explains a missing browser instead of suggesting an inst
     assert.match(toolError('NO_PLAYWRIGHT', 'Playwright is not installed in /p', 'Run: npm install').content[0].text, /npm install/);
     process.env.VERCEL = '1';
     const text = toolError('NO_PLAYWRIGHT', 'Playwright is not installed in /var/task', 'Run: npm install').content[0].text;
-    assert.match(text, /hosted endpoint has no browser/);
+    assert.match(text, /hosted endpoint has no copy of your project/);
+    assert.match(text, /page tools/);
     assert.match(text, /playwright-e2e-mcp init/);
     assert.doesNotMatch(text, /\/var\/task/);
     assert.match(missingPlaywrightMessage({ packageManager: 'npm' }).hint, /playwright-e2e-mcp init/);

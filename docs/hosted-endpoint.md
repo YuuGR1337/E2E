@@ -26,8 +26,9 @@ host yourself on a free Vercel account, with your own token:
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fxsignon-secure%2FE2E&env=PW_MCP_HTTP_TOKEN&envDescription=A%20random%20secret%20of%2016%2B%20characters%3B%20clients%20send%20it%20as%20a%20bearer%20token%20or%20type%20it%20to%20sign%20in&project-name=playwright-e2e-mcp)
 
-A serverless function has no browser, so for running and fixing your own tests
-the free local install (`npx -y playwright-e2e-mcp init`) is the better route.
+The deployment bundles a serverless Chromium, so the page tools work from the web on public
+URLs. Running and fixing your own tests needs your project next to the server, so for that the
+free local install (`npx -y playwright-e2e-mcp init`) is the route.
 
 **Open vs. token-protected.** With `PW_MCP_HTTP_TOKEN` set (at least 16
 characters; use a random value) every tool is served to clients that send
@@ -76,13 +77,18 @@ codex mcp add playwright-e2e-remote --url https://playwright-e2e-mcp.vercel.app/
   --bearer-token-env-var PW_MCP_HTTP_TOKEN
 ```
 
-**What to expect:** `list-tests` works and reports the specs bundled with the
-deployment. Even with a token, tools that spawn a browser (`run-test`,
-`inspect-page`, `validate-selector`, `diagnose-flaky`, …) cannot download
-Chromium in a serverless function, so they return `NO_PLAYWRIGHT` with a note
-that points to the local install. Use the stdio install for real runs; the
-hosted endpoint is for discovery and for clients that cannot run local
-processes.
+**What to expect:** with a token, the page tools run on Vercel:
+
+| Works on the hosted endpoint | Needs the local install |
+| --- | --- |
+| `inspect-page`, `validate-selector`, `audit-accessibility`, `audit-performance` on public URLs (Chromium only; private and loopback addresses are refused) | `run-test`, `diagnose-flaky`, `suggest-fix`, `generate-e2e-test` and `load-report` need your project; `compare-visual-state` needs somewhere to keep baselines |
+| `list-tests` and `get-failure` (also without a token) | Firefox and WebKit, and pages on `localhost` or your private network |
+
+The browser is [`@sparticuz/chromium`](https://github.com/Sparticuz/chromium), a Chromium
+build for serverless functions, driven by the bundled `playwright-core`. The first call on a
+cold function unpacks it (about 2 seconds). Tools that need a project return a note that points
+to the local install. Set `PW_MCP_SERVERLESS_CHROMIUM=0` in the Vercel project to turn the
+browser off.
 
 ```bash
 # verify the handshake without any client (the live deployment needs the token;

@@ -7,10 +7,16 @@
  * Set PW_MCP_HTTP_TOKEN in the Vercel project to serve all tools to callers
  * that send it as a bearer token (16+ characters, or the function refuses to
  * start); without it only read-only tools are served, in restricted mode.
+ *
+ * The page tools launch the serverless Chromium build imported here; the
+ * static import lets the function bundler trace it.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createMcpHttpHandler, handleNodeRequest } from '../dist/http.js';
+import chromium from '@sparticuz/chromium';
+import { createMcpHttpHandler, handleNodeRequest, provideServerlessChromium } from '../dist/http.js';
+
+provideServerlessChromium(chromium);
 
 const handler = createMcpHttpHandler();
 

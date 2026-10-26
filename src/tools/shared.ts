@@ -38,6 +38,7 @@ import { HOSTED_NO_BROWSER, isHostedDeployment, selectConfig } from '../utils/pr
 import { childEnv, runProcess } from '../utils/playwright-runner.js';
 import { extractJsonFromText } from '../utils/report-parser.js';
 import { BLOCKED_RANGES, assertUrlAllowed, blockPrivateUrls } from '../utils/url-policy.js';
+import { serverlessChromium, serverlessChromiumEnabled } from '../utils/serverless-chromium.js';
 
 /* ------------------------------------------------------------------ */
 /* State + responses                                                   */
@@ -548,6 +549,11 @@ export async function resolvePageState(
   if (input.viewport) out.viewport = input.viewport;
   if (input.har) out.har = await resolveHar(input.har, root, ctx);
   if (input.browser && input.browser !== 'chromium') {
+    if (serverlessChromiumEnabled()) {
+      throw new PlaywrightMcpError(`${input.browser} is not available on the hosted endpoint`, 'INVALID_PATH', {
+        hint: "The hosted endpoint bundles Chromium only. Use 'chromium', or run the server locally for Firefox and WebKit.",
+      });
+    }
     if (input.browser === 'webkit' && blockPrivateUrls()) {
       throw new PlaywrightMcpError('webkit is not available while private addresses are blocked', 'INVALID_PATH', {
         hint: "WebKit cannot route every connection through the address guard. Use 'chromium' or 'firefox'.",
@@ -792,6 +798,17 @@ export async function runBrowserScript(
   config: BrowserScriptConfig,
   options: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<BrowserScriptOutcome> {
+  let serverless;
+  try {
+    serverless = await serverlessChromium();
+  } catch (err) {
+    return {
+      ok: false,
+      kind: 'BROWSER_CRASH',
+      error: `Could not unpack the bundled Chromium: ${err instanceof Error ? err.message : String(err)}`,
+      hint: 'Retry once; if it keeps failing, the function may be out of temp space or memory.',
+    };
+  }
   const scriptPath = tempFilePath('pw-mcp-probe', '.cjs');
   const configPath = tempFilePath('pw-mcp-probe', '.json');
   await writeFile(scriptPath, PROBE_SCRIPT, 'utf8');
@@ -799,7 +816,12 @@ export async function runBrowserScript(
   // the Windows command-line limit.
   await writeFile(
     configPath,
-    JSON.stringify({ ...config, blockPrivate: blockPrivateUrls(), blockedRanges: BLOCKED_RANGES }),
+    JSON.stringify({
+      ...config,
+      blockPrivate: blockPrivateUrls(),
+      blockedRanges: BLOCKED_RANGES,
+      ...(serverless ? { serverlessChromium: { executablePath: serverless.executablePath, args: serverless.args } } : {}),
+    }),
     'utf8',
   );
 
@@ -809,7 +831,7 @@ export async function runBrowserScript(
       [scriptPath, configPath],
       {
         cwd: config.projectRoot,
-        env: childEnv({ FORCE_COLOR: '0' }),
+        env: childEnv({ FORCE_COLOR: '0', ...serverless?.env }),
         timeoutMs: options.timeoutMs ?? 45_000,
         signal: options.signal,
       },

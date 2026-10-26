@@ -218,8 +218,8 @@ export function isHostedDeployment(): boolean {
 
 /** What to tell a caller of the hosted bridge that asked for a browser or a test run. */
 export const HOSTED_NO_BROWSER = {
-  message: 'The hosted endpoint has no browser or Playwright install, so it cannot run tests or open pages.',
-  hint: 'Run the server next to your project instead: `npx -y playwright-e2e-mcp init` in the project folder, then restart your AI app. It runs your own tests and can open localhost and public pages.',
+  message: 'The hosted endpoint has no copy of your project, so it cannot run your tests.',
+  hint: 'Here the page tools (inspect-page, validate-selector, audit-accessibility, audit-performance) work on public URLs. To run and fix your own tests, run the server next to your project: `npx -y playwright-e2e-mcp init` in the project folder, then restart your AI app.',
 };
 
 export function missingPlaywrightMessage(detection: ProjectDetection): {

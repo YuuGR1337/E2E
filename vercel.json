@@ -1,7 +1,8 @@
 {
   "functions": {
     "api/mcp.ts": {
-      "includeFiles": "{examples/**,node_modules/axe-core/axe.min.js}"
+      "maxDuration": 120,
+      "includeFiles": "{examples/**,node_modules/axe-core/axe.min.js,node_modules/playwright-core/**,node_modules/@sparticuz/chromium/bin/**}"
     }
   },
   "rewrites": [
