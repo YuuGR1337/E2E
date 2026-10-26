@@ -230,8 +230,8 @@ Running and fixing your own tests needs your project, so use the local install f
 | --- | --- |
 | Skill only, any agent | `npx skills add xsignon-secure/E2E` |
 | MCP Registry | `io.github.xsignon-secure/E2E` ([listing](https://registry.modelcontextprotocol.io/)); registry-aware clients find it there |
-| Straight from GitHub, no npm | `npx -y github:xsignon-secure/E2E#v0.5.0` (pin a release tag) |
-| Release tarball | `npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.5.0/playwright-e2e-mcp-0.5.0.tgz` |
+| Straight from GitHub, no npm | `npx -y github:xsignon-secure/E2E#v0.5.1` (pin a release tag) |
+| Release tarball | `npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.5.1/playwright-e2e-mcp-0.5.1.tgz` |
 | Docker | `docker run -i --rm -v "$PWD:/work" playwright-e2e-mcp` (see [Development](docs/development.md#docker)) |
 | Local checkout | `"command": "node", "args": ["/path/to/E2E/dist/index.js"]` |
 
@@ -344,7 +344,7 @@ steps:
   - uses: actions/setup-node@v6
     with: { node-version: 24 }
   - run: npm ci && npx playwright install --with-deps chromium
-  - uses: xsignon-secure/E2E@v0.5.0
+  - uses: xsignon-secure/E2E@v0.5.1
     with:
       flaky-runs: 3      # 0 skips the flaky verdict
       suggest: 2         # suggest-fix diffs for the first 2 failures
