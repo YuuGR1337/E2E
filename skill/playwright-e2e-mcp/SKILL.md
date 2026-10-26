@@ -1,6 +1,6 @@
 ---
 name: playwright-e2e-mcp
-description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results grouped by root cause, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism, test-order and timing bugs, signed-in page inspection with network mocks, WCAG accessibility audits, Web Vitals performance audits and local run history, plus a guide to writing tests that stay green. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a test is flaky or which tests are unstable, repair a selector that no longer matches, write or review a Playwright test, check a page for accessibility, performance or visual regressions.
+description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results grouped by root cause, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism, test-order and timing bugs, signed-in page inspection with network mocks and HAR replay, aria snapshots, tests written by walking the flow on the live page, CI report diagnosis, WCAG accessibility audits, Web Vitals performance audits and local run history with the commit that broke each test, plus a guide to writing tests that stay green. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a CI run failed, find out why a test is flaky or which tests are unstable or slow, repair a selector that no longer matches, write or review a Playwright test, check a page for accessibility, performance or visual regressions.
 ---
 
 # Playwright E2E with playwright-e2e-mcp
@@ -18,13 +18,15 @@ newer. If `suggest-fix`, `get-run-status` or `analyze-history` is missing, the
 server is older than 0.2.0: use the steps that do not need those tools and tell
 the user to update it. `diagnose-flaky`'s per-test table and `isolate` option
 arrived in 0.3.0; `audit-accessibility`, `diagnose-flaky`'s `order` option and
-root-cause grouping in `run-test` arrived in 0.4.0; `audit-performance`, network
-mocks (`routes`) and strict-mode fixes in `suggest-fix` arrive in 0.5.0.
+root-cause grouping in `run-test` arrived in 0.4.0; `audit-performance`,
+`load-report`, network mocks (`routes`), `har`, `browser`, `inspect-page`'s
+`view: "aria"`, `generate-e2e-test`'s `steps`, the `slow`, `trend` and `commits`
+history views and strict-mode fixes in `suggest-fix` arrive in 0.5.0.
 
 ## Before you start
 
 1. Check that the server's tools are available. They are named `run-test`,
-   `get-run-status`, `get-failure`, `suggest-fix`, `inspect-page`,
+   `get-run-status`, `get-failure`, `load-report`, `suggest-fix`, `inspect-page`,
    `validate-selector`, `list-tests`, `generate-e2e-test`,
    `compare-visual-state`, `audit-accessibility`, `audit-performance`,
    `diagnose-flaky` and
@@ -122,11 +124,29 @@ fresh browser, so a signed-in page shows the login screen unless you pass state:
   `"status": 500` for an error state, `"abort": true` to drop a third party,
   `"delayMs"` alone to slow the real request. The response flags a mock that
   matched nothing; fix the glob before trusting the result.
+- `har`: `{ "path": "tests/fixtures/cart.har", "mode": "record" }` saves the
+  page's traffic once; later calls with `{ "path": ... }` replay it, so the page
+  shows the same data every time (`url` narrows it, e.g. `"**/api/**"`).
+- `browser`: `"firefox"` or `"webkit"` when a bug only shows in that engine
+  (it must be installed; `audit-performance` stays Chromium-only).
 - `viewport`: `{ "width": 390, "height": 844 }` for mobile layouts.
 
 When a response says the page landed on a login screen, retry with
 `storageState`. `suggest-fix` takes `storageState` and `headers` too when you heal
 against a live `url`.
+
+## A failure from CI
+
+When the user asks why CI failed, do not re-run the whole suite locally first.
+Have the user (or `gh run download <run-id> -D ci-artifacts`) put the job's
+report and its `test-results` artifact inside the project, then call
+`load-report` with `{ "report": "ci-artifacts/results.json" }` (a JSON report
+file, or the folder of blob-report zips from sharded jobs). It maps the CI paths
+onto the checkout, finds the traces and makes that run the last run, so continue
+with the core loop from step 2: `get-failure`, then `suggest-fix`, which
+re-runs the fix locally. If it says traces were not found, pass `traceDirs` with
+the folder where `test-results` was unpacked. The run is added to the history
+with its commit.
 
 ## Flaky or intermittent failures
 
@@ -177,19 +197,35 @@ last failing diagnose run straight after, and each repetition is recorded in the
 history, so `diagnose-flaky` with `runs: 5` is also the quickest way to seed
 history for `analyze-history`.
 
-Every `run-test`, `diagnose-flaky` and `suggest-fix` run is recorded in
-`<project>/.playwright-e2e-mcp/history.jsonl` on the user's machine;
-`analyze-history` with `view: "test"` and a `test` filter shows one test's
-pass/fail timeline.
+Every `run-test`, `diagnose-flaky`, `suggest-fix` and `load-report` run is
+recorded in `<project>/.playwright-e2e-mcp/history.jsonl` on the user's machine,
+with the commit it tested. `analyze-history` views:
+
+- `view: "test"` with a `test` filter: one test's pass/fail timeline.
+- `view: "commits"`: for each failing or flaky test, the first bad commit after
+  its last passing streak and the last good one. Read that diff before
+  guessing at a cause.
+- `view: "trend"`: failed and flaky executions per day, to tell whether the
+  suite is getting better or worse.
+- `view: "slow"`: tests by median duration, flagging ones that got slower.
 
 ## Other tasks
 
 - **List tests:** `list-tests`, with `filter` for a substring of `file › title`.
-- **Write a new test:** `generate-e2e-test` with a `description` (and `pageUrl` if
-  there is no `baseURL`). It scaffolds a spec from selectors the project actually
-  declares, from recent git changes, and reports each selector's source. Review the
-  file it writes, then `run-test` it. Pass `write: false` to preview without
-  writing.
+- **Write a new test for a flow:** first find the locators with
+  `inspect-page` (`view: "locators"`, adding `actions` to reach later steps),
+  then call `generate-e2e-test` with a `description` and `steps` in the
+  `actions` format (and `pageUrl` if there is no `baseURL`, `storageState`
+  behind a login). It runs the steps on the live page, stops at a step that
+  does not work, writes a spec that replays them with the URL and accessibility
+  snapshot where the flow landed (`assertScope` narrows it to a dialog or
+  form), and runs it once. Trim end-state lines that hold data likely to
+  change. Without `steps` it scaffolds a spec from selectors the project
+  declares in recent git changes; review it, then `run-test` it. Pass
+  `write: false` to preview without writing.
+- **Lock a page's structure:** `inspect-page` with `view: "aria"` (and a
+  `selector` for one region) returns the accessibility snapshot and a
+  `toMatchAriaSnapshot` assertion to paste into a spec.
 - **Set up CI:** when the user wants the same diagnosis on every pull request,
   point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.4.2`) or the
   `npx -y playwright-e2e-mcp ci` command in `references/setup.md`. It writes the

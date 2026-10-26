@@ -1,7 +1,7 @@
 {
   "name": "playwright-e2e-mcp",
   "version": "0.4.2",
-  "description": "MCP server and agent skill that run, diagnose and fix failing Playwright end-to-end tests: root-cause grouping, trace analysis, verified locator fixes, flaky and test-order verdicts, WCAG accessibility and Web Vitals performance audits, network mocks",
+  "description": "MCP server and agent skill that run, diagnose and fix failing Playwright end-to-end tests: root-cause grouping, trace analysis, verified locator fixes, flaky and test-order verdicts, CI report diagnosis, run history with breaking commits, tests written by walking the flow, aria snapshots, WCAG accessibility and Web Vitals performance audits, network mocks and HAR replay",
   "author": "xsignon-secure (https://github.com/xsignon-secure)",
   "mcpName": "io.github.xsignon-secure/E2E",
   "type": "module",

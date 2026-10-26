@@ -1,5 +1,5 @@
 /**
- * MCP server setup: creates the McpServer instance, registers the thirteen
+ * MCP server setup: creates the McpServer instance, registers the fourteen
  * tools (with spec tool annotations) and the workflow prompts, and wires
  * each invocation to a ToolContext (per-tool logger, abort signal, progress
  * reporter, shared store, default project root).
@@ -30,6 +30,7 @@ import { diagnoseFlakyTool } from './tools/diagnose-flaky.js';
 import { suggestFixTool } from './tools/suggest-fix.js';
 import { analyzeHistoryTool } from './tools/analyze-history.js';
 import { getRunStatusTool } from './tools/get-run-status.js';
+import { loadReportTool } from './tools/load-report.js';
 import { registerPrompts } from './prompts.js';
 
 const require = createRequire(import.meta.url);
@@ -94,6 +95,19 @@ const TOOLS: ToolSpec[] = [
       openWorldHint: false,
     },
     handler: getFailureTool.handler as ToolSpec['handler'],
+  },
+  {
+    ...loadReportTool,
+    title: 'Load a CI report',
+    // Reads a report the caller points at; merging blob reports spawns
+    // Playwright; records the run in the local history.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    handler: loadReportTool.handler as ToolSpec['handler'],
   },
   {
     ...suggestFixTool,
@@ -238,13 +252,13 @@ export const READ_ONLY_TOOLS: readonly string[] = ['list-tests', 'get-failure', 
 
 /**
  * Named tool sets for PW_MCP_TOOLS / --tools. Every tool definition costs
- * context on each request (all thirteen are ~6k tokens), so a client that
+ * context on each request (all fourteen are ~9k tokens), so a client that
  * only fixes failing suites can load the core loop alone.
  */
 export const TOOL_PROFILES: Readonly<Record<string, readonly string[]>> = {
   all: TOOLS.map((tool) => tool.name),
   core: ['run-test', 'get-run-status', 'get-failure', 'suggest-fix', 'diagnose-flaky', 'list-tests'],
-  triage: ['run-test', 'get-run-status', 'get-failure', 'diagnose-flaky', 'analyze-history', 'list-tests'],
+  triage: ['run-test', 'get-run-status', 'get-failure', 'load-report', 'diagnose-flaky', 'analyze-history', 'list-tests'],
   inspect: ['inspect-page', 'validate-selector', 'compare-visual-state', 'audit-accessibility', 'audit-performance'],
   author: ['list-tests', 'inspect-page', 'validate-selector', 'generate-e2e-test', 'run-test'],
 };

@@ -40,6 +40,7 @@ const EXPECTED_TOOLS = [
   'get-run-status',
   'inspect-page',
   'list-tests',
+  'load-report',
   'run-test',
   'suggest-fix',
   'validate-selector',

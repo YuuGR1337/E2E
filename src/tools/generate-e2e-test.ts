@@ -11,7 +11,9 @@
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import { PlaywrightMcpError } from '../types/index.js';
-import type { ToolContext, ToolResponse } from '../types/index.js';
+import type { RunTestResult, ToolContext, ToolResponse } from '../types/index.js';
+import { formatLocator, quote } from '../utils/locator-expr.js';
+import { runTests } from '../utils/playwright-runner.js';
 import type { ElementInfo } from '../types/index.js';
 import { detectProject } from '../utils/project-detector.js';
 import { analyzeRecentChanges, detectEntryUrl } from '../utils/change-analyzer.js';
@@ -30,13 +32,21 @@ import {
   assertHttpUrl,
   bestLocator,
   clipLines,
+  codeFence,
+  describeRouteHits,
+  formatDuration,
   guard,
+  pageActionSchema,
+  resolvePageState,
   resolveConfigSelection,
   resolveProjectRoot,
   runBrowserScript,
+  toolError,
   toolText,
 } from './shared.js';
+import type { ResolvedPageState } from './shared.js';
 import { assertUrlAllowed } from '../utils/url-policy.js';
+import { ariaAssertionCode } from './inspect-page.js';
 
 const generateInput = z.object({
   description: z
@@ -60,6 +70,16 @@ const generateInput = z.object({
     .boolean()
     .optional()
     .describe('Verify discovered selectors against the live page (default true when a URL is known)'),
+  steps: z
+    .array(pageActionSchema)
+    .max(30)
+    .optional()
+    .describe('Walk the flow: run these steps on the live page first, then write a spec that replays them and asserts the end state'),
+  storageState: z.string().optional().describe('steps: signed-in session file, also used by the spec'),
+  assertScope: z.string().max(200).optional().describe("steps: CSS scope of the end-state aria snapshot (default 'body')"),
+  verify: z.boolean().optional().describe('steps: run the written spec once to prove it passes (default true)'),
+  project: z.string().optional().describe('steps: Playwright project for the verification run'),
+  timeoutMs: z.number().int().min(5_000).max(600_000).optional(),
 });
 
 export type GenerateE2ETestInput = z.infer<typeof generateInput>;
@@ -229,6 +249,271 @@ function buildSpec(options: {
   ].join('\n');
 }
 
+/** Max end-state snapshot lines asserted in full; longer ones fall back to headings. */
+const MAX_SNAPSHOT_LINES = 60;
+
+/** One walked step as Playwright code. */
+export function stepCode(action: NonNullable<ResolvedPageState['actions']>[number]): string {
+  const target = action.locator ? `page.${formatLocator(action.locator)}` : undefined;
+  switch (action.type) {
+    case 'goto':
+      return `await page.goto(${quote(action.url ?? '/')});`;
+    case 'fill':
+      return `await ${target}.fill(${quote(action.value ?? '')});`;
+    case 'press':
+      return target ? `await ${target}.press(${quote(action.value ?? '')});` : `await page.keyboard.press(${quote(action.value ?? '')});`;
+    case 'select':
+      return `await ${target}.selectOption(${quote(action.value ?? '')});`;
+    case 'wait':
+      return target ? `await expect(${target}.first()).toBeVisible();` : `await page.waitForTimeout(${Math.min(action.ms ?? 500, 10_000)});`;
+    default:
+      return `await ${target}.${action.type}();`;
+  }
+}
+
+/** Escape a string for a RegExp literal. */
+function regexLiteral(text: string): string {
+  return text.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
+}
+
+/**
+ * End-state assertions: the URL the flow lands on (path only, so query
+ * ids do not pin it) and the accessibility snapshot of the scope, or its
+ * headings when the snapshot is too long to be a useful assertion.
+ */
+export function endStateAssertions(options: { entryUrl: string; finalUrl?: string; snapshot?: string; scope?: string }): string[] {
+  const out: string[] = [];
+  if (options.finalUrl && options.finalUrl !== options.entryUrl) {
+    try {
+      const final = new URL(options.finalUrl);
+      out.push(`    await expect(page).toHaveURL(/${regexLiteral(final.pathname)}(?:[?#]|$)/);`);
+    } catch {
+      /* not a URL: skip */
+    }
+  }
+  const snapshot = options.snapshot?.trim();
+  if (!snapshot) return out;
+  const lines = snapshot.split('\n');
+  if (lines.length <= MAX_SNAPSHOT_LINES) {
+    out.push(ariaAssertionCode(snapshot, options.scope, 4));
+    return out;
+  }
+  const headings = lines
+    .map((line) => /- heading "((?:[^"\\]|\\.)*)"/.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined && name !== '')
+    .slice(0, 3);
+  for (const name of headings) {
+    out.push(`    await expect(page.getByRole('heading', { name: ${quote(name.replace(/\\"/g, '"'))} })).toBeVisible();`);
+  }
+  return out;
+}
+
+export function buildWalkSpec(options: {
+  description: string;
+  entryUrl: string;
+  steps: NonNullable<ResolvedPageState['actions']>;
+  storageState?: string;
+  assertions: string[];
+}): string {
+  const title = jsString(options.description);
+  return [
+    "import { test, expect } from '@playwright/test';",
+    '',
+    '/**',
+    ` * ${GENERATED_MARKER} "${commentText(options.description)}"`,
+    ' * Every step was run on the live page before this file was written, and',
+    ' * the end-state assertions were captured from where the flow landed.',
+    ' */',
+    `test.describe('${title}', () => {`,
+    ...(options.storageState ? [`  test.use({ storageState: ${quote(options.storageState)} });`, ''] : []),
+    `  test('${title}', async ({ page }) => {`,
+    `    await page.goto(${quote(options.entryUrl)});`,
+    ...options.steps.map((step) => `    ${stepCode(step)}`),
+    ...(options.assertions.length > 0 ? ['', '    // End state', ...options.assertions] : []),
+    '  });',
+    '});',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Where a generated spec goes, refusing paths outside the project and any
+ * existing file this tool did not write.
+ */
+async function prepareTarget(
+  args: GenerateE2ETestInput,
+  root: string,
+  testDir: string | undefined,
+): Promise<string> {
+  let targetPath: string;
+  if (args.file) {
+    targetPath = sanitizeUserPath(args.file, root);
+  } else {
+    const dir = args.testDir
+      ? sanitizeUserPath(args.testDir, root)
+      : testDir
+        ? normalizePath(testDir)
+        : resolvePath(root, 'tests');
+    targetPath = resolvePath(dir, `generated/${slugify(args.description)}.spec.ts`);
+  }
+  if (!isTestFile(targetPath)) {
+    throw new PlaywrightMcpError(
+      `Generated tests must be spec files, got ${relativeToRoot(root, targetPath)}`,
+      'INVALID_PATH',
+      { hint: 'Use a name ending in .spec.ts (or .test.ts), e.g. "tests/checkout.spec.ts".' },
+    );
+  }
+  // testDir comes from playwright.config and is not caller-checked yet.
+  if (!isPathInside(targetPath, root)) {
+    throw new PlaywrightMcpError(
+      `Path "${targetPath}" resolves outside the project root`,
+      'INVALID_PATH',
+      { hint: `Generated tests are written inside ${normalizePath(root)} only.` },
+    );
+  }
+  await assertRealPathInside(targetPath, root);
+  const exists = await stat(targetPath).then(
+    (info) => info.isFile(),
+    () => false,
+  );
+  if (exists && args.overwrite !== true) {
+    throw new PlaywrightMcpError(
+      `A file already exists at ${relativeToRoot(root, targetPath)}`,
+      'INVALID_PATH',
+      { hint: 'Pass `overwrite: true` to replace it, or set `file` / `description` to pick a different name.' },
+    );
+  }
+  if (exists) {
+    const current = await readFile(targetPath, 'utf8').catch(() => '');
+    // The marker must be the generated header line, not just text
+    // that appears somewhere in a hand-written file.
+    const header = current.split(/\r?\n/, 8);
+    if (!header.some((line) => line.startsWith(` * ${GENERATED_MARKER} "`))) {
+      throw new PlaywrightMcpError(
+        `Refusing to overwrite ${relativeToRoot(root, targetPath)}: it was not generated by this tool`,
+        'INVALID_PATH',
+        { hint: 'overwrite only replaces specs that generate-e2e-test wrote. Pick a different `file` or `description`.' },
+      );
+    }
+  }
+  return targetPath;
+}
+
+/**
+ * Walk the flow: run the steps on the live page (each locator must work,
+ * or the walk stops at that step), capture where it landed, write a spec
+ * that replays the steps with end-state assertions, and run it once.
+ */
+async function walkFlow(
+  args: GenerateE2ETestInput,
+  ctx: ToolContext,
+  root: string,
+  entryUrl: string,
+  configPath: string | undefined,
+  testDir: string | undefined,
+): Promise<ToolResponse> {
+  const state = await resolvePageState({ actions: args.steps, storageState: args.storageState }, root, entryUrl, ctx);
+  const steps = state.actions ?? [];
+  const timeoutMs = Math.max(30_000, 10_000 + steps.length * 12_000);
+  const outcome = await runBrowserScript(
+    {
+      ...state,
+      mode: 'inspect',
+      view: 'aria',
+      selector: args.assertScope,
+      projectRoot: root,
+      url: entryUrl,
+      maxHtmlChars: 40_000,
+      gotoTimeout: 20_000,
+      waitTimeout: 10_000,
+      startedAt: Date.now(),
+    },
+    { timeoutMs, signal: ctx.signal },
+  );
+  if (!outcome.ok) {
+    const done = outcome.actionsDone ?? [];
+    return toolError(
+      outcome.kind ?? 'UNKNOWN',
+      `The flow stopped on the live page: ${outcome.error ?? 'unknown error'}${done.length ? `\n\nSteps that worked: ${done.join('; ')}` : ''}`,
+      `Nothing was written. Call inspect-page with url ${entryUrl}${done.length ? ` and the first ${done.length} step(s) as \`actions\`` : ''} (view 'locators') to see the page where it stopped, fix that step's locator, and walk again.`,
+      outcome.stderrTail,
+    );
+  }
+  const data = outcome.data!;
+  const storageState = state.storageState ? relativeToRoot(root, state.storageState) : undefined;
+  const assertions = endStateAssertions({ entryUrl, finalUrl: data.finalUrl, snapshot: data.ariaTruncated ? undefined : data.ariaSnapshot, scope: args.assertScope });
+  const spec = buildWalkSpec({ description: args.description, entryUrl, steps, storageState, assertions });
+
+  const lines: string[] = [`## 🧪 Walked and generated — "${args.description}"`, ''];
+  let targetPath: string | undefined;
+  if (args.write !== false) {
+    targetPath = await prepareTarget(args, root, testDir);
+    await writeFileInsideRoot(targetPath, spec, root);
+    ctx.logger.info('walked test written', { file: targetPath, steps: steps.length });
+    lines.push(`**File:** \`${relativeToRoot(root, targetPath)}\` (written)`);
+  } else {
+    lines.push('_Not written (`write: false`) — code below._');
+  }
+  lines.push(
+    `**Walked:** ${steps.length} step(s) from ${entryUrl}${data.finalUrl && data.finalUrl !== entryUrl ? ` → ${data.finalUrl}` : ''}, every locator acted on the live page`,
+  );
+  const mocks = describeRouteHits(state, data.routeHits);
+  if (mocks.length > 0) lines.push(...mocks);
+  const snapshotLines = data.ariaSnapshot?.split('\n').length ?? 0;
+  lines.push(
+    `**End state:** ${
+      data.ariaSnapshot === undefined
+        ? `\`${args.assertScope}\` was not on the final page, so only the URL is asserted`
+        : data.ariaTruncated || snapshotLines > MAX_SNAPSHOT_LINES
+          ? `snapshot too long (${snapshotLines} lines), so headings are asserted; pass \`assertScope\` (e.g. 'main' or a form) for a full structure check`
+          : `URL and aria snapshot of \`${args.assertScope ?? 'body'}\` (${snapshotLines} lines)`
+    }`,
+    '',
+    '### Test source',
+    '',
+    '```ts',
+    clipLines(spec, 200, 12_000),
+    '```',
+    '',
+  );
+
+  if (!targetPath || args.verify === false) {
+    lines.push(`> Not verified. Run it with **run-test**${targetPath ? ` (\`testFiles: ["${relativeToRoot(root, targetPath)}"]\`)` : ''}.`);
+    return toolText(lines.join('\n'));
+  }
+
+  let result: RunTestResult;
+  try {
+    result = await runTests({
+      projectRoot: root,
+      configPath,
+      testFiles: [targetPath],
+      project: args.project,
+      retries: 0,
+      retryOnFailure: false,
+      timeoutMs: args.timeoutMs,
+      signal: ctx.signal,
+    });
+  } catch (err) {
+    lines.push(`> Written but not verified: the run could not start (${err instanceof Error ? err.message : String(err)}).`);
+    return toolText(lines.join('\n'));
+  }
+  ctx.store.setLastRun({ projectRoot: root, result, at: Date.now() });
+  if (result.ok) {
+    lines.push(`### ✅ Verified — the spec passes (${formatDuration(result.durationMs)}).`, '', '> Trim end-state lines that hold data likely to change (prices, dates, counts), or swap them for `/regex/` names.');
+  } else {
+    const first = result.failures[0];
+    lines.push(
+      '### ❌ The written spec failed its first run',
+      '',
+      first ? codeFence(clipLines(first.message, 8, 1_200), 'text') : (result.errorMessage ?? 'The run failed without a test failure.'),
+      '',
+      '> The file is kept so you can fix it. Usual causes: the app needs a signed-in session (`storageState`), page data changed between runs (relax the snapshot), or another project in the config (pass `project`). **get-failure** has the details.',
+    );
+  }
+  return toolText(lines.join('\n'));
+}
+
 /* ------------------------------------------------------------------ */
 /* Tool                                                                */
 /* ------------------------------------------------------------------ */
@@ -236,7 +521,7 @@ function buildSpec(options: {
 export const generateE2ETestTool = {
   name: 'generate-e2e-test',
   description:
-    "Scaffold a Playwright test from a description using the project's REAL selectors. Scans the agent's recent file changes (git working tree / last commit, mtime fallback), extracts data-testid / role / label / placeholder / id locators with their source locations, optionally cross-checks them against the live page, writes a ready-to-run spec, and returns next steps.",
+    "Scaffold a Playwright test from a description using the project's REAL selectors. Scans the agent's recent file changes (git working tree / last commit, mtime fallback), extracts data-testid / role / label / placeholder / id locators with their source locations, optionally cross-checks them against the live page, writes a ready-to-run spec, and returns next steps. With `steps` it walks the flow on the live page instead: each step must work there, the spec replays them, asserts the URL and aria snapshot where the flow landed, and is run once to prove it passes.",
   inputSchema: generateE2ETestSchema,
   handler: async (args: GenerateE2ETestInput, ctx: ToolContext): Promise<ToolResponse> =>
     guard('generate-e2e-test', async () => {
@@ -267,6 +552,15 @@ export const generateE2ETestTool = {
       // The SSRF guard refuses private addresses up front (the probe's proxy
       // also enforces it); with the guard off this is a no-op.
       if (entryUrl) await assertUrlAllowed(entryUrl);
+
+      if (args.steps && args.steps.length > 0) {
+        if (!entryUrl) {
+          throw new PlaywrightMcpError('Walking a flow needs a start URL', 'INVALID_PATH', {
+            hint: 'Pass pageUrl, or set baseURL in playwright.config.',
+          });
+        }
+        return walkFlow(args, ctx, root, entryUrl, configPath, detection.testDir ?? undefined);
+      }
 
       // 1. What changed recently, and which selectors do those files declare?
       const analysis = await analyzeRecentChanges(root, { limit: 12 });
@@ -320,56 +614,7 @@ export const generateE2ETestTool = {
       let targetPath: string | undefined;
       const shouldWrite = args.write !== false;
       if (shouldWrite) {
-        if (args.file) {
-          targetPath = sanitizeUserPath(args.file, root);
-        } else {
-          const dir = args.testDir
-            ? sanitizeUserPath(args.testDir, root)
-            : detection.testDir
-              ? normalizePath(detection.testDir)
-              : resolvePath(root, 'tests');
-          targetPath = resolvePath(dir, `generated/${slugify(args.description)}.spec.ts`);
-        }
-        if (!isTestFile(targetPath)) {
-          throw new PlaywrightMcpError(
-            `Generated tests must be spec files, got ${relativeToRoot(root, targetPath)}`,
-            'INVALID_PATH',
-            { hint: 'Use a name ending in .spec.ts (or .test.ts), e.g. "tests/checkout.spec.ts".' },
-          );
-        }
-        // testDir comes from playwright.config and is not caller-checked yet.
-        if (!isPathInside(targetPath, root)) {
-          throw new PlaywrightMcpError(
-            `Path "${targetPath}" resolves outside the project root`,
-            'INVALID_PATH',
-            { hint: `Generated tests are written inside ${normalizePath(root)} only.` },
-          );
-        }
-        await assertRealPathInside(targetPath, root);
-        const exists = await stat(targetPath).then(
-          (info) => info.isFile(),
-          () => false,
-        );
-        if (exists && args.overwrite !== true) {
-          throw new PlaywrightMcpError(
-            `A file already exists at ${relativeToRoot(root, targetPath)}`,
-            'INVALID_PATH',
-            { hint: 'Pass `overwrite: true` to replace it, or set `file` / `description` to pick a different name.' },
-          );
-        }
-        if (exists) {
-          const current = await readFile(targetPath, 'utf8').catch(() => '');
-          // The marker must be the generated header line, not just text
-          // that appears somewhere in a hand-written file.
-          const header = current.split(/\r?\n/, 8);
-          if (!header.some((line) => line.startsWith(` * ${GENERATED_MARKER} "`))) {
-            throw new PlaywrightMcpError(
-              `Refusing to overwrite ${relativeToRoot(root, targetPath)}: it was not generated by this tool`,
-              'INVALID_PATH',
-              { hint: 'overwrite only replaces specs that generate-e2e-test wrote. Pick a different `file` or `description`.' },
-            );
-          }
-        }
+        targetPath = await prepareTarget(args, root, detection.testDir ?? undefined);
         await writeFileInsideRoot(targetPath, spec, root);
         ctx.logger.info('generated test written', { file: targetPath, selectors: ranked.length });
       }

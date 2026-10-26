@@ -38,6 +38,23 @@ Returns the message and code frame, expected vs actual, stack, failure kind and
 diagnosis, console output, the DOM snapshot at failure with the failed action and
 its selector, failed network requests, console errors and warnings, and next steps.
 
+## load-report
+
+Loads a run from CI (0.5.0+) so the other tools work on it.
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `report` | string | Required: JSON report inside the project, or a folder of blob-report zips from sharded jobs (merged with `playwright merge-reports`) |
+| `traceDirs` | string[] | Where the job's `test-results` artifact was unpacked (default: the report's folder and its parent) |
+| `commit`, `branch` | string | Override the report metadata |
+| `record` | boolean | Add the run to the history (default true) |
+| `timeoutMs` | number | Limit for merging blob reports (default 120000) |
+
+CI paths are mapped onto the checkout (the CI root is the folder of the
+report's config file). Returns the usual run result headed "Imported run", the
+source, commit and build link, and how many failures have a trace. The run
+becomes the last run for `get-failure`, `suggest-fix` and `diagnose-flaky`.
+
 ## inspect-page
 
 | Argument | Type | Notes |
@@ -48,17 +65,21 @@ its selector, failed network requests, console errors and warnings, and next ste
 | `waitUntil` | `load` \| `domcontentloaded` \| `networkidle` | Navigation wait |
 | `includeHtml` | boolean | Include rendered HTML (capped by `maxHtmlChars`, default 20000) |
 | `timeoutMs` | number | Default 45000 |
-| `view` | `elements` \| `locators` | `locators`: compact map of interactive elements with verified locators |
+| `view` | `elements` \| `locators` \| `aria` | `locators`: compact map of interactive elements with verified locators; `aria` (0.5.0+): accessibility snapshot of the page or of `selector`, with a `toMatchAriaSnapshot` assertion |
 | `storageState` | string | Playwright storageState JSON inside the project (signed-in session); defaults to `PW_MCP_STORAGE_STATE` |
 | `headers` | object | Extra HTTP headers |
 | `actions` | array | Up to 20 steps after load: `{ type: click\|dblclick\|fill\|press\|check\|uncheck\|select\|hover\|wait\|goto, locator?, value?, url?, ms? }` |
 | `routes` | array | Up to 20 network mocks before load, first match wins: `{ url (glob), method?, status?, json? \| body?, contentType?, headers?, abort?, delayMs? }` (0.5.0+). The result reports hits per mock |
+| `har` | object | `{ path, mode?: replay\|record, url?, notFound?: abort\|fallback }` (0.5.0+): replay requests from a HAR inside the project, or record the traffic to one. `routes` still win |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Engine (0.5.0+, default chromium); must be installed |
 | `viewport` | object | `{ width, height }` |
 
 Returns each element's Playwright locators proven unique on the page (role +
 name first), unique CSS selector, tag, visibility, box, text and attributes,
-plus console messages. `validate-selector` and `compare-visual-state` take the
-same `storageState`, `headers`, `actions`, `routes` and `viewport`.
+plus console messages. `validate-selector`, `compare-visual-state`,
+`audit-accessibility` and `audit-performance` take the same `storageState`,
+`headers`, `actions`, `routes`, `har`, `browser` and `viewport`
+(`audit-performance` is Chromium-only).
 
 ## validate-selector
 
@@ -93,7 +114,16 @@ Falls back to a source scan when Playwright cannot list (broken install or spec)
 | `write` | boolean | Write to disk (default true) |
 | `overwrite` | boolean | Replace a spec this tool generated earlier |
 | `liveInspect` | boolean | Cross-check selectors on the live page |
+| `steps` | array | Walk the flow (0.5.0+): up to 30 steps in the `actions` format, run on the live page first |
+| `assertScope` | string | With `steps`: CSS scope of the end-state aria snapshot (default `body`) |
+| `storageState` | string | With `steps`: session for the walk, also set in the spec with `test.use` |
+| `verify`, `project`, `timeoutMs` | | With `steps`: run the written spec once (default true) |
 | `config` | string | As above |
+
+With `steps`, a step that fails on the live page stops the walk and nothing is
+written. Otherwise the spec replays the steps and asserts the URL path and the
+aria snapshot where the flow landed (its headings when it is over 60 lines),
+then runs once; a failing first run keeps the file and shows the error.
 
 ## compare-visual-state
 
@@ -205,10 +235,13 @@ likely missing.
 
 | Argument | Type | Notes |
 | --- | --- | --- |
-| `view` | `flaky` \| `patterns` \| `test` | Default `flaky` |
+| `view` | `flaky` \| `patterns` \| `slow` \| `trend` \| `commits` \| `test` | Default `flaky`. `slow`, `trend` and `commits` are 0.5.0+ |
 | `test` | string | Substring of a test's file or title |
 | `lastRuns` | number | Default 30 |
 | `limit` | number | Default 15 |
 
 Reads `.playwright-e2e-mcp/history.jsonl`, written by every run
-(`PW_MCP_HISTORY=0` disables it).
+(`PW_MCP_HISTORY=0` disables it). `slow` lists tests by median duration in
+passing runs and flags ones that got slower; `trend` shows failed and flaky
+executions per day; `commits` names, per failing or flaky test, the first bad
+commit after its last passing streak and the last good one.
