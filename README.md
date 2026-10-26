@@ -26,11 +26,28 @@ a **failure detective** and a **fixer that checks its own work**.
 Other tools let an AI click around a browser. This one lets it **keep your test suite green**.
 
 ```
-run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ green
-   │              │                 └─ refuses when the element is really gone (app bug)
-   │              └─ DOM at failure, failed requests, console errors
-   └─ background runs, progress ──▶ analyze-history (flaky / broken / regressed)
+run-test ──────┐
+load-report ───┴─▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ green
+ (CI job report)        │                 └─ refuses when the element is really gone (app bug)
+                        └─ DOM at failure, failed requests, console errors
+every run ──▶ analyze-history (flaky / broken / slow / which commit broke it)
 ```
+
+### New in 0.5.0
+
+- **Diagnose CI failures:** `load-report` reads a CI job's report (or sharded blob reports)
+  and its traces, so the same diagnosis and verified fixes work on failures from CI.
+- **Know which commit broke a test:** run history now records commits; `analyze-history`
+  adds `commits`, `slow` and `trend` views.
+- **Write tests by walking the flow:** `generate-e2e-test` with `steps` runs them on the live
+  page, writes the spec with end-state assertions, and runs it once to prove it passes.
+- **Performance audits:** `audit-performance` measures Web Vitals on desktop or a throttled
+  phone and hands back a budget test.
+- **More page control:** aria snapshots with ready `toMatchAriaSnapshot` assertions, network
+  mocks, HAR record/replay, and Chromium, Firefox or WebKit.
+- **Smarter fixes:** `suggest-fix` resolves strict-mode violations ("resolved to 2 elements").
+
+[Full release notes](https://github.com/xsignon-secure/E2E/releases/tag/v0.5.0)
 
 ## What it does
 
@@ -924,7 +941,9 @@ object (`time`, `level`, `message` plus context):
 ## Typical workflow
 
 1. `run-test` `{ "testFiles": ["tests/checkout.spec.ts"] }`, or `{ "background": true }`
-   for a long suite and `get-run-status` `{ "waitSeconds": 30 }` until it finishes.
+   for a long suite and `get-run-status` `{ "waitSeconds": 30 }` until it finishes. For a
+   failure from CI, download the job's artifacts and call `load-report`
+   `{ "report": "ci-artifacts/results.json" }` instead.
 2. `get-failure` `{ "index": 1 }` to read the code frame, expected/actual, **the DOM
    snapshot at failure**, the failed network requests and the page's console errors.
 3. `suggest-fix` `{ "index": 1 }` for a locator or copy change: review the diff, then
@@ -934,11 +953,15 @@ object (`time`, `level`, `message` plus context):
    (add `storageState` or `actions` to reach the right screen), then `validate-selector`
    to prove the new locator before editing.
 5. If a failure looks intermittent: `diagnose-flaky` `{ "runs": 3 }` for fresh evidence,
-   and `analyze-history` to see how the test behaved across earlier runs.
+   and `analyze-history` to see how the test behaved across earlier runs
+   (`{ "view": "commits" }` names the commit where it went bad).
 6. After changing CSS or components: `compare-visual-state` `{ "url": "…", "name": "checkout" }`.
 7. Re-run **only what failed** with `run-test` `{ "lastFailed": true }` until green.
 
-To write a new test, start with `generate-e2e-test` `{ "description": "checkout with a saved card" }`.
+To write a new test, find the locators with `inspect-page` `{ "view": "locators" }`, then call
+`generate-e2e-test` with a `description` and the `steps` of the flow; it walks them on the live
+page, writes the spec and runs it once. To check a page's speed or accessibility, use
+`audit-performance` and `audit-accessibility`.
 
 ## Benchmark
 
