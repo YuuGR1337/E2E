@@ -244,6 +244,12 @@ export interface PlaywrightJsonReport {
     rootDir?: string;
     configFile?: string;
     projects?: Array<{ name?: string }>;
+    /** Filled by Playwright's git info capture (captureGitInfo) and CI detection. */
+    metadata?: {
+      gitCommit?: { hash?: string; shortHash?: string; subject?: string; branch?: string };
+      ci?: { commitHash?: string; branch?: string; buildHref?: string };
+      [key: string]: unknown;
+    };
   };
   suites?: ReportSuite[];
   errors?: ReportError[];
@@ -412,6 +418,20 @@ export interface RunTestResult {
   errorKind?: ErrorKind;
   errorMessage?: string;
   hint?: string;
+  /** The result was loaded from a report written elsewhere (CI), not run here. */
+  imported?: {
+    reportPath: string;
+    traceDirs: string[];
+    git?: GitInfo;
+  };
+}
+
+/** Which commit a run tested. */
+export interface GitInfo {
+  commit?: string;
+  branch?: string;
+  subject?: string;
+  buildUrl?: string;
 }
 
 /* ------------------------------------------------------------------ */

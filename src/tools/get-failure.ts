@@ -204,7 +204,8 @@ export async function allFailures(record: LastRunRecord): Promise<TestFailure[]>
   if (record.result.reportPath && record.result.failuresTruncated) {
     const raw = await readFile(record.result.reportPath, 'utf8').catch(() => null);
     if (raw !== null) {
-      const parsed = parseReportJson(raw, record.projectRoot, 200);
+      const imported = record.result.imported;
+      const parsed = parseReportJson(raw, record.projectRoot, 200, imported ? { traceDirs: imported.traceDirs } : undefined);
       if (parsed.failures.length > failures.length) return parsed.failures;
     }
   }

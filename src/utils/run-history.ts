@@ -10,8 +10,9 @@
  * The analysis functions are pure (exported for unit tests).
  */
 
+import { execFile } from 'node:child_process';
 import { appendFile, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
-import type { FailureKind, RunTestResult, TestOutcome, TestStatus } from '../types/index.js';
+import type { FailureKind, GitInfo, RunTestResult, TestOutcome, TestStatus } from '../types/index.js';
 import { PlaywrightMcpError } from '../types/index.js';
 import { assertRealPathInside, joinProjectPath, toNativePath, writeFileInsideRoot } from './path-utils.js';
 
@@ -39,6 +40,39 @@ export interface HistoryEntry {
   durationMs: number;
   stats: { passed: number; failed: number; flaky: number; skipped: number } | null;
   tests: HistoryTest[];
+  /** The commit the run tested (0.5.0+); `dirty` when the checkout had local changes. */
+  commit?: string;
+  branch?: string;
+  subject?: string;
+  dirty?: boolean;
+  /** Where the result came from when it was not run here, e.g. a CI build link. */
+  buildUrl?: string;
+}
+
+function git(args: string[], cwd: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, timeout: 3_000, windowsHide: true, maxBuffer: 1_000_000 }, (err, stdout) => {
+      resolve(err ? undefined : String(stdout).trim());
+    });
+  });
+}
+
+/** The checked-out commit of `root`, or nothing when it is not a git repository. */
+export async function localGitInfo(root: string): Promise<(GitInfo & { dirty?: boolean }) | undefined> {
+  const native = toNativePath(root);
+  const commit = await git(['rev-parse', 'HEAD'], native);
+  if (!commit || !/^[0-9a-f]{7,64}$/i.test(commit)) return undefined;
+  const [branch, subject, status] = await Promise.all([
+    git(['rev-parse', '--abbrev-ref', 'HEAD'], native),
+    git(['log', '-1', '--pretty=%s'], native),
+    git(['status', '--porcelain', '--untracked-files=no'], native),
+  ]);
+  return {
+    commit,
+    branch: branch && branch !== 'HEAD' ? branch : undefined,
+    subject: subject ? subject.slice(0, 200) : undefined,
+    dirty: status ? status.length > 0 : undefined,
+  };
 }
 
 export function historyEnabled(): boolean {
@@ -50,7 +84,12 @@ export function historyPath(root: string): string {
   return joinProjectPath(root, HISTORY_DIR, HISTORY_FILE);
 }
 
-export function toHistoryEntry(result: RunTestResult, source: string, at = new Date()): HistoryEntry {
+export function toHistoryEntry(
+  result: RunTestResult,
+  source: string,
+  at = new Date(),
+  gitInfo?: GitInfo & { dirty?: boolean },
+): HistoryEntry {
   const tests = (result.outcomes ?? []).slice(0, MAX_TESTS_PER_ENTRY).map((o: TestOutcome) => {
     const test: HistoryTest = { file: o.file, title: o.title, status: o.status };
     if (o.project) test.project = o.project;
@@ -70,13 +109,25 @@ export function toHistoryEntry(result: RunTestResult, source: string, at = new D
       ? { passed: result.stats.expected, failed: result.stats.unexpected, flaky: result.stats.flaky, skipped: result.stats.skipped }
       : null,
     tests,
+    ...(gitInfo?.commit ? { commit: gitInfo.commit } : {}),
+    ...(gitInfo?.branch ? { branch: gitInfo.branch } : {}),
+    ...(gitInfo?.subject ? { subject: gitInfo.subject } : {}),
+    ...(gitInfo?.dirty ? { dirty: true } : {}),
+    ...(gitInfo?.buildUrl ? { buildUrl: gitInfo.buildUrl } : {}),
   };
 }
 
 /** Append a run to the project's history (no-op when disabled or nothing ran). */
-export async function recordRun(root: string, result: RunTestResult, source: string): Promise<boolean> {
+export async function recordRun(
+  root: string,
+  result: RunTestResult,
+  source: string,
+  options: { at?: Date; git?: GitInfo } = {},
+): Promise<boolean> {
   if (!historyEnabled()) return false;
   if (!result.outcomes || result.outcomes.length === 0) return false;
+  // A run done here tested the working tree; an imported one says which commit it tested.
+  const gitInfo = options.git ?? (await localGitInfo(root).catch(() => undefined));
   const dir = joinProjectPath(root, HISTORY_DIR);
   await mkdir(toNativePath(dir), { recursive: true });
   // The folder could be a symlink planted in the project; keep writes inside.
@@ -90,7 +141,7 @@ export async function recordRun(root: string, result: RunTestResult, source: str
   if (info?.isSymbolicLink()) {
     throw new PlaywrightMcpError('Refusing to write run history through a symlink', 'INVALID_PATH');
   }
-  await appendFile(toNativePath(file), `${JSON.stringify(toHistoryEntry(result, source))}\n`, 'utf8');
+  await appendFile(toNativePath(file), `${JSON.stringify(toHistoryEntry(result, source, options.at, gitInfo))}\n`, 'utf8');
   // Trim now and then, not on every write.
   if (info && info.size > 4_000_000) {
     const lines = (await readFile(toNativePath(file), 'utf8')).split('\n').filter((line) => line.trim() !== '');
@@ -278,4 +329,144 @@ export function failurePatterns(entries: HistoryEntry[]): FailurePattern[] {
     }
   }
   return [...map.values()].sort((a, b) => b.count - a.count || b.tests.length - a.tests.length);
+}
+
+/* ------------------------------------------------------------------ */
+/* Slow tests, trend, and the commit that broke a test                  */
+/* ------------------------------------------------------------------ */
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export interface SlowTest {
+  key: string;
+  runs: number;
+  medianMs: number;
+  maxMs: number;
+  /** Median of the newest third of runs over the median of the rest (needs 6+ runs). */
+  slowdown?: number;
+}
+
+/** Tests by typical duration (passing runs only, so timeouts do not dominate), slowest first. */
+export function slowTests(entries: HistoryEntry[]): SlowTest[] {
+  const map = new Map<string, number[]>();
+  for (const entry of entries) {
+    for (const test of entry.tests) {
+      if (test.ms === undefined || (test.status !== 'passed' && test.status !== 'flaky')) continue;
+      const key = testKey(test);
+      const list = map.get(key) ?? [];
+      list.push(test.ms);
+      map.set(key, list);
+    }
+  }
+  const out: SlowTest[] = [];
+  for (const [key, ms] of map) {
+    const item: SlowTest = { key, runs: ms.length, medianMs: Math.round(median(ms)), maxMs: Math.max(...ms) };
+    if (ms.length >= 6) {
+      const cut = Math.floor((ms.length * 2) / 3);
+      const before = median(ms.slice(0, cut));
+      if (before > 0) item.slowdown = Math.round((median(ms.slice(cut)) / before) * 100) / 100;
+    }
+    out.push(item);
+  }
+  return out.sort((a, b) => b.medianMs - a.medianMs || a.key.localeCompare(b.key));
+}
+
+export interface TrendDay {
+  day: string;
+  runs: number;
+  /** Test executions that day (one per test per run). */
+  executions: number;
+  failed: number;
+  flaky: number;
+  /** (failed + flaky) / executions */
+  unstableRate: number;
+  /** Distinct tests that failed or passed only on retry that day. */
+  unstableTests: number;
+}
+
+/** One row per UTC day: how many tests failed or flaked, oldest first. */
+export function dailyTrend(entries: HistoryEntry[]): TrendDay[] {
+  const days = new Map<string, { runs: number; executions: number; failed: number; flaky: number; tests: Set<string> }>();
+  for (const entry of entries) {
+    const day = entry.at.slice(0, 10);
+    const slot = days.get(day) ?? { runs: 0, executions: 0, failed: 0, flaky: 0, tests: new Set<string>() };
+    slot.runs += 1;
+    for (const test of entry.tests) {
+      if (test.status === 'skipped' || test.status === 'unknown') continue;
+      slot.executions += 1;
+      if (FAILED.has(test.status)) slot.failed += 1;
+      if (test.status === 'flaky') slot.flaky += 1;
+      if (test.status !== 'passed') slot.tests.add(testKey(test));
+    }
+    days.set(day, slot);
+  }
+  return [...days.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, d]) => ({
+      day,
+      runs: d.runs,
+      executions: d.executions,
+      failed: d.failed,
+      flaky: d.flaky,
+      unstableRate: d.executions > 0 ? (d.failed + d.flaky) / d.executions : 0,
+      unstableTests: d.tests.size,
+    }));
+}
+
+export interface BreakingCommit {
+  test: string;
+  /** Last commit on which the test passed before its current bad streak. */
+  lastGood?: { commit?: string; at: string };
+  /** First run of the current bad streak. */
+  firstBad: { commit?: string; subject?: string; at: string; status: TestStatus };
+  /** How the test has behaved since: 'failing' every run, or 'flaky' (back and forth). */
+  since: 'failing' | 'flaky';
+}
+
+/**
+ * For each test that is failing or flaky now, the commit where that began:
+ * the first bad run after its last passing streak (at least two passes in
+ * a row, so one lucky pass of a flaky test does not count as good).
+ */
+export function breakingCommits(entries: HistoryEntry[]): BreakingCommit[] {
+  const runs = new Map<string, Array<{ status: TestStatus; entry: HistoryEntry }>>();
+  for (const entry of entries) {
+    for (const test of entry.tests) {
+      if (test.status === 'skipped' || test.status === 'unknown') continue;
+      const key = testKey(test);
+      const list = runs.get(key) ?? [];
+      list.push({ status: test.status, entry });
+      runs.set(key, list);
+    }
+  }
+  const out: BreakingCommit[] = [];
+  for (const [test, list] of runs) {
+    if (!list.some((r) => r.status !== 'passed')) continue;
+    // The newest stretch of two or more passes ends where the bad period starts.
+    let goodEnd = -1;
+    for (let i = list.length - 1; i >= 1; i -= 1) {
+      if (list[i].status === 'passed' && list[i - 1].status === 'passed') {
+        goodEnd = i;
+        break;
+      }
+    }
+    const firstBadIndex = list.findIndex((r, i) => i > goodEnd && r.status !== 'passed');
+    if (firstBadIndex < 0) continue; // healthy again since its last bad run
+    const tail = list.slice(firstBadIndex);
+    const lastStatus = list[list.length - 1].status;
+    const allBad = tail.every((r) => FAILED.has(r.status));
+    if (lastStatus === 'passed' && tail.filter((r) => r.status !== 'passed').length < 2) continue;
+    const bad = list[firstBadIndex];
+    out.push({
+      test,
+      lastGood: goodEnd >= 0 ? { commit: list[goodEnd].entry.commit, at: list[goodEnd].entry.at } : undefined,
+      firstBad: { commit: bad.entry.commit, subject: bad.entry.subject, at: bad.entry.at, status: bad.status },
+      since: allBad ? 'failing' : 'flaky',
+    });
+  }
+  return out.sort((a, b) => b.firstBad.at.localeCompare(a.firstBad.at) || a.test.localeCompare(b.test));
 }

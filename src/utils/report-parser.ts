@@ -9,6 +9,7 @@
 
 import type {
   DiscoveredTest,
+  GitInfo,
   ErrorKind,
   FailureKind,
   PlaywrightJsonReport,
@@ -20,12 +21,39 @@ import type {
   TestOutcome,
   TestStatus,
 } from '../types/index.js';
-import { isAbsolutePath, isPathInside, normalizePath, relativeToRoot, resolvePath } from './path-utils.js';
+import { existsSync } from 'node:fs';
+import { isAbsolutePath, isPathInside, normalizePath, relativeToRoot, resolvePath, toNativePath } from './path-utils.js';
 
 /** Cap so one pathological run cannot produce a megabyte tool payload. */
 const MAX_FAILURES = 25;
 
 const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+
+/**
+ * A report written on another machine (a CI job): its absolute paths point
+ * at that machine's checkout. They are rebased onto the local project
+ * root, and trace archives are also looked for in `traceDirs` (where the
+ * job's test-results artifact was unpacked).
+ */
+export interface ForeignReportOptions {
+  traceDirs: string[];
+}
+
+/** The commit a report was produced from, when Playwright recorded it. */
+export function reportGitInfo(report: PlaywrightJsonReport): GitInfo | undefined {
+  const meta = report.config?.metadata;
+  if (!meta || typeof meta !== 'object') return undefined;
+  const git = meta.gitCommit && typeof meta.gitCommit === 'object' ? meta.gitCommit : undefined;
+  const ci = meta.ci && typeof meta.ci === 'object' ? meta.ci : undefined;
+  const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim().slice(0, 200) : undefined);
+  const info: GitInfo = {
+    commit: str(git?.hash) ?? str(ci?.commitHash),
+    branch: str(git?.branch) ?? str(ci?.branch),
+    subject: str(git?.subject),
+    buildUrl: str(ci?.buildHref),
+  };
+  return Object.values(info).some((v) => v !== undefined) ? info : undefined;
+}
 
 export interface ParsedReport {
   stats: ReportStats | null;
@@ -39,6 +67,8 @@ export interface ParsedReport {
   projects: string[];
   configPath: string | null;
   parseError?: string;
+  /** Commit, branch and build link recorded in the report's metadata. */
+  git?: GitInfo;
 }
 
 export interface Diagnosis {
@@ -82,6 +112,26 @@ function flattenOutput(entries: unknown[] | undefined): string | undefined {
   return joined === '' ? undefined : joined;
 }
 
+/**
+ * Where a CI trace landed locally: its rebased path, or the same path
+ * under one of the artifact folders (with or without its leading
+ * `test-results/`, since artifacts are often uploaded from inside it).
+ * Only existing files inside the project root count.
+ */
+export function findForeignTrace(resolved: string, root: string, traceDirs: string[]): string | undefined {
+  const candidates: string[] = [resolved];
+  const marker = resolved.lastIndexOf('/test-results/');
+  const tail = marker >= 0 ? resolved.slice(marker + 1) : resolved.split('/').slice(-2).join('/');
+  const inner = tail.startsWith('test-results/') ? tail.slice('test-results/'.length) : tail;
+  for (const dir of traceDirs) {
+    candidates.push(resolvePath(dir, tail), resolvePath(dir, inner));
+  }
+  for (const candidate of candidates) {
+    if (isPathInside(candidate, root) && existsSync(toNativePath(candidate))) return candidate;
+  }
+  return undefined;
+}
+
 /** Locate the trace.zip attachment for a failed attempt, if any. */
 function resolveTracePath(
   attachments: Array<{ name?: string; path?: string; contentType?: string }> | undefined,
@@ -93,9 +143,14 @@ function resolveTracePath(
     const isTrace =
       name === 'trace' || name.endsWith('.zip') || contentType.includes('zip') || contentType.includes('trace');
     if (!isTrace || !attachment.path) continue;
-    const p = normalizePath(attachment.path);
+    const p = ctx.rebase(normalizePath(attachment.path));
     const base = ctx.rootDir ?? ctx.root;
     const resolved = isAbsolutePath(p) ? p : resolvePath(base, p);
+    if (ctx.foreign) {
+      const found = findForeignTrace(resolved, ctx.root, ctx.foreign.traceDirs);
+      if (found) return found;
+      continue;
+    }
     // The report is project-controlled: only follow trace paths that stay
     // inside the project root, so get-failure cannot be pointed at other files.
     if (!isPathInside(resolved, ctx.root)) continue;
@@ -170,6 +225,9 @@ interface SpecRecord {
 interface WalkContext {
   root: string;
   rootDir: string | null;
+  /** Maps a foreign report's absolute paths onto the local root (identity otherwise). */
+  rebase: (p: string) => string;
+  foreign?: ForeignReportOptions;
   records: SpecRecord[];
   totalDuration: number;
   projectsSeen: Set<string>;
@@ -183,9 +241,10 @@ function normalizeSpecFile(file: string | undefined, ctx: WalkContext): string {
   // get-failure's next steps, list-tests — needs paths relative to the
   // project root. Rebase: relative → resolve against rootDir, absolute →
   // keep; then relativize against the project root when it is inside.
-  const absolute = isAbsolutePath(normalized)
-    ? normalized
-    : resolvePath(ctx.rootDir ?? ctx.root, normalized);
+  const rebased = ctx.rebase(normalized);
+  const absolute = isAbsolutePath(rebased)
+    ? rebased
+    : resolvePath(ctx.rootDir ?? ctx.root, rebased);
   if (isPathInside(absolute, ctx.root)) return relativeToRoot(ctx.root, absolute);
   return normalized;
 }
@@ -286,7 +345,12 @@ function mergeStats(reported: Partial<ReportStats> | undefined, computed: Report
 /* ------------------------------------------------------------------ */
 
 /** Parse a JSON report from a raw string. Never throws. */
-export function parseReportJson(raw: string, root = '', maxFailures = MAX_FAILURES): ParsedReport {
+export function parseReportJson(
+  raw: string,
+  root = '',
+  maxFailures = MAX_FAILURES,
+  foreign?: ForeignReportOptions,
+): ParsedReport {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -303,14 +367,36 @@ export function parseReportJson(raw: string, root = '', maxFailures = MAX_FAILUR
       parseError: `Playwright JSON report could not be parsed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  return parseReport(parsed, root, maxFailures);
+  return parseReport(parsed, root, maxFailures, foreign);
+}
+
+/**
+ * For a foreign report, the CI checkout is the folder that held the config
+ * file; its absolute paths are mapped onto the local root.
+ */
+export function foreignRebase(
+  configFile: string | undefined,
+  root: string,
+  foreign: ForeignReportOptions | undefined,
+): (p: string) => string {
+  if (!foreign || typeof configFile !== 'string') return (p) => p;
+  const config = normalizePath(configFile);
+  if (!isAbsolutePath(config) || isPathInside(config, root)) return (p) => p;
+  const ciRoot = config.slice(0, config.lastIndexOf('/'));
+  if (ciRoot === '') return (p) => p;
+  return (p) => (p === ciRoot ? root : p.startsWith(`${ciRoot}/`) ? `${root}${p.slice(ciRoot.length)}` : p);
 }
 
 /**
  * Parse an already-deserialized Playwright JSON report into normalized
  * stats, failures, and a flat test listing.
  */
-export function parseReport(report: unknown, root = '', maxFailures = MAX_FAILURES): ParsedReport {
+export function parseReport(
+  report: unknown,
+  root = '',
+  maxFailures = MAX_FAILURES,
+  foreign?: ForeignReportOptions,
+): ParsedReport {
   const base: ParsedReport = {
     stats: null,
     failures: [],
@@ -334,9 +420,13 @@ export function parseReport(report: unknown, root = '', maxFailures = MAX_FAILUR
     return { ...base, parseError: 'Playwright report contained no suites, errors, or stats.' };
   }
 
+  const localRoot = normalizePath(root || '.');
+  const rebase = foreignRebase(typed.config?.configFile, localRoot, foreign);
   const ctx: WalkContext = {
-    root: normalizePath(root || '.'),
-    rootDir: typeof typed.config?.rootDir === 'string' ? normalizePath(typed.config.rootDir) : null,
+    root: localRoot,
+    rootDir: typeof typed.config?.rootDir === 'string' ? rebase(normalizePath(typed.config.rootDir)) : null,
+    rebase,
+    foreign,
     records: [],
     totalDuration: 0,
     projectsSeen: new Set<string>(),
@@ -458,6 +548,7 @@ export function parseReport(report: unknown, root = '', maxFailures = MAX_FAILUR
     specCount: totalTestCases,
     projects: [...ctx.projectsSeen],
     configPath,
+    git: reportGitInfo(typed),
   };
 }
 
