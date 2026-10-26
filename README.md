@@ -40,11 +40,13 @@ run-test ──▶ get-failure ──▶ suggest-fix (apply + re-run) ──▶ 
 | 🔍 | "Why did this fail?" | Reads Playwright's trace: the page at the moment of failure, the broken request, the console error. No guessing. |
 | 🛠️ | "Fix it" | Swaps in a locator proven unique on the page, **re-runs the test**, and undoes the edit if it's still red. If the button is really gone, it tells you it's an app bug instead of hiding it. |
 | 🎲 | "Is this test flaky?" | Re-runs it many ways (repeated, alone, in random order) and names the exact test and seed that cause the flake. |
-| 📈 | "What's been breaking lately?" | Keeps a local run history and separates flaky, newly broken and always-broken tests. |
+| 📈 | "What's been breaking lately?" | Keeps a local run history and separates flaky, newly broken and always-broken tests; shows the slowest tests, stability by day and **the commit where each test went bad**. |
+| ☁️ | "Why did CI fail?" | Loads the CI job's report (or merges sharded blob reports), maps its paths onto your checkout and finds the traces in the downloaded artifact, so the same diagnosis and fixes work on CI failures. |
+| ✍️ | "Write a test for this flow" | Walks the steps on the live page first, writes a spec that replays them with assertions on where the flow landed (URL and accessibility snapshot), and runs it once to prove it passes. |
 | ♿ | "Check this page for accessibility" | Runs axe-core (WCAG 2.2 AA) and returns each problem with a ready-to-paste locator and regression test. |
 | ⚡ | "Why is this page slow?" | Measures Web Vitals (LCP, CLS, INP, TBT) on desktop or a throttled phone, names the slow element and the elements that jump, and hands back a budget test. |
 | 🧪 | "Show me the error state" | Mocks API responses (500s, empty lists, slow calls) so the AI can inspect, audit or measure states that are hard to reach. |
-| 🔐 | "Test the page after login" | Works behind sign-in with saved sessions, headers and click/fill steps. |
+| 🔐 | "Test the page after login" | Works behind sign-in with saved sessions, headers and click/fill steps, in Chromium, Firefox or WebKit, and can record or replay network traffic from a HAR file. |
 | 🤖 | "Do it in CI" | A [GitHub Action and `ci` command](#ci-github-action-and-ci-command) post the diagnosis, flaky verdict and fix diffs on your PR. |
 
 **Why it stands out**
@@ -161,7 +163,7 @@ code --add-mcp '{"name":"playwright-e2e","command":"npx","args":["-y","playwrigh
 ```
 
 Only need the fix loop? `--tools=core` (or `PW_MCP_TOOLS=core`) exposes six tools and
-cuts the tool-definition context by about two thirds; see [Configuration](#configuration).
+cuts the tool-definition context by about three quarters; see [Configuration](#configuration).
 
 Details and per-client config: [Installation](#installation) ·
 [MCP client configuration](#mcp-client-configuration).
@@ -175,16 +177,17 @@ Details and per-client config: [Installation](#installation) ·
 | `run-test` | Run Playwright tests and return stats, failures, diagnostics and hints; reports progress, and `background: true` returns a run id for long suites |
 | `get-run-status` | Progress or final result of a background run; can wait for it or cancel it |
 | `get-failure` | Deep analysis of one failure: stack, expected/actual, **DOM snapshot at failure (from the Playwright trace)**, failed requests, console errors, next steps |
+| `load-report` | Load a run from CI: a JSON report or a folder of sharded blob reports; CI paths are mapped onto the checkout and traces found in the unpacked artifact, so `get-failure`, `suggest-fix` and `diagnose-flaky` work on it, and the run joins the history with its commit |
 | `suggest-fix` | Patch a failure: a drifted locator is replaced with one **proven unique** on the DOM at failure, an ambiguous one (strict mode violation) gets the unique locator of the intended match, changed copy gets the new expected text; `apply: true` writes it, re-runs the test and reverts if still red |
-| `inspect-page` | Open a URL headlessly (optionally signed in, after steps) and return elements with **verified Playwright locators**, CSS selectors, visibility, text and console output |
+| `inspect-page` | Open a URL headlessly (optionally signed in, after steps) and return elements with **verified Playwright locators**, CSS selectors, visibility, text and console output, or the **accessibility snapshot with a ready `toMatchAriaSnapshot` assertion** |
 | `list-tests` | List available tests (`file`, `line`, full title, projects) with filtering |
 | `validate-selector` | Check a CSS selector, Playwright selector or **locator expression** against a live page: validity, match count, and a sturdier verified locator for each match |
-| `generate-e2e-test` | Scaffold a Playwright test from a description using the project's **real** selectors and verified locators from the live page |
+| `generate-e2e-test` | Scaffold a Playwright test from a description using the project's **real** selectors and verified locators from the live page, or **walk a flow** step by step on the live page and write a spec that is run once to prove it passes |
 | `compare-visual-state` | Visual regression: screenshot before/after a change and report *what* moved and how colors shifted |
 | `audit-accessibility` | Run axe-core (WCAG 2.2 AA by default) on a page, signed in or after steps, and return violations worst first with **verified locators** for the offending elements and a regression check |
 | `audit-performance` | Measure lab **Web Vitals** (LCP, CLS, TBT, FCP, TTFB, INP during steps), optionally as a throttled phone and the median of several runs; rate them or check budgets, name the LCP and shifting elements as verified locators, list heavy and render-blocking requests, and return a budget test |
 | `diagnose-flaky` | Run a failing test 2–10 times **with retries disabled** and return an evidence verdict: `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING`; tells parallelism and **test-order** bugs from races |
-| `analyze-history` | Rank flaky, regressed and broken tests from the local run history, group failures by cause, or show one test's timeline |
+| `analyze-history` | Rank flaky, regressed and broken tests from the local run history, group failures by cause, list the slowest tests, show stability by day, name **the commit where each test went bad**, or show one test's timeline |
 
 Two **prompts** package the main workflows for clients that show them as slash commands:
 `fix-failing-test` (optional `test`) and `triage-flaky-tests`.
@@ -202,6 +205,8 @@ Two **prompts** package the main workflows for clients that show them as slash c
 | `actions` | array | Up to 20 steps run after load: `{ "type": "click" \| "dblclick" \| "hover" \| "fill" \| "press" \| "check" \| "uncheck" \| "select" \| "wait" \| "goto", "locator"?, "value"?, "url"?, "ms"? }`. Locators use Playwright syntax, e.g. `getByRole('button', { name: 'Open settings' })` |
 | `routes` | array | Up to 20 network mocks applied before the page loads, first match wins: `{ "url": "**/api/cart", "method"?, "status"?, "json"? \| "body"?, "contentType"?, "headers"?, "abort"?, "delayMs"? }`. `json`, `body` or `status` fulfils the request, `abort: true` fails it, and `delayMs` alone slows the real request |
 | `viewport` | object | `{ "width": 390, "height": 844 }` (default 1280×720) |
+| `har` | object | `{ "path": "tests/fixtures/cart.har", "mode"?: "replay" \| "record", "url"?: "**/api/**", "notFound"?: "abort" \| "fallback" }`. `replay` (default) answers matching requests from the file, `record` saves the page's traffic to it. The file and its folder must be inside the project. `routes` mocks still win over the HAR |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine (default `chromium`; the engine must be installed with `npx playwright install`). `audit-performance` is Chromium-only, and WebKit is refused while private addresses are blocked |
 
 Mocks make states that are hard to reach easy to inspect, audit or measure: the error
 banner after a 500, the empty list, the spinner of a slow API, the page without a
@@ -215,6 +220,10 @@ that matched nothing, which usually means a wrong glob:
   { "url": "**/googletagmanager.com/**", "abort": true }
 ]
 ```
+
+A HAR makes a page repeatable: record it once against a working backend
+(`"mode": "record"`), then replay it so the page renders the same data offline or in CI.
+The same file works in a spec with `page.routeFromHAR()`.
 
 A failing step reports which one failed and how many ran. When the page lands on a login
 screen, the response says so and suggests `storageState`.
@@ -290,7 +299,7 @@ numbered next steps (re-run this single test by `file:line`, headed/debug mode,
 | Argument | Type | Description |
 | --- | --- | --- |
 | `url` | string | Full http(s) URL to open (required) |
-| `view` | `elements` \| `locators` | `locators` returns a compact map of interactive elements with verified locators (cheapest); `elements` (default) the DOM inventory |
+| `view` | `elements` \| `locators` \| `aria` | `locators` returns a compact map of interactive elements with verified locators (cheapest); `aria` the accessibility snapshot of the page (or of `selector`) with a ready `toMatchAriaSnapshot` assertion; `elements` (default) the DOM inventory |
 | `projectRoot` | string | Project whose Playwright launches the browser |
 | `selector` | string | Inspect matches of this selector instead of the whole DOM |
 | `waitFor` | string | Wait for a selector (CSS or `text=…`) before inspecting |
@@ -298,7 +307,7 @@ numbered next steps (re-run this single test by `file:line`, headed/debug mode,
 | `includeHtml` | boolean | Include the rendered HTML (capped) |
 | `maxHtmlChars` | number | HTML cap, default `20000` |
 | `timeoutMs` | number | Overall limit, default `45000` |
-| `storageState` / `headers` / `actions` / `viewport` | — | [Page state](#page-state-signed-in-pages-headers-and-steps) |
+| `storageState` / `headers` / `actions` / `routes` / `har` / `browser` / `viewport` | — | [Page state](#page-state-signed-in-pages-headers-and-steps) |
 
 Each element comes with Playwright locators that were **checked on the page** to resolve to
 exactly that element, best first (role + accessible name, test id, label, placeholder, text,
@@ -308,6 +317,16 @@ captured, errors first. A locator map looks like:
 ```markdown
 1. `getByRole('button', { name: 'Proceed to checkout' })` — button "Proceed to checkout" · also `getByTestId('checkout-btn')`
 2. `getByLabel('Search')` — searchbox "Search"
+```
+
+`view: "aria"` returns the page's structure as Playwright sees it, and the assertion that
+locks it in a test:
+
+```ts
+await expect(page.locator("#cart")).toMatchAriaSnapshot(`
+  - list:
+    - listitem: Real item
+`);
 ```
 
 ### `list-tests`
@@ -352,9 +371,35 @@ advice, or `❌ INVALID` with the parse error.
 | `write` | boolean | Write the file to disk (default `true`) |
 | `overwrite` | boolean | Replace an existing spec at the target path; only specs this tool generated can be replaced |
 | `liveInspect` | boolean | Cross-check selectors against the live page (default on when a URL is known) |
+| `steps` | array | **Walk the flow**: up to 30 steps in the [`actions`](#page-state-signed-in-pages-headers-and-steps) format, run on the live page before anything is written |
+| `assertScope` | string | With `steps`: CSS scope of the end-state accessibility snapshot (default `body`) |
+| `storageState` | string | With `steps`: signed-in session for the walk; the spec uses it too (`test.use`) |
+| `verify` / `project` / `timeoutMs` | — | With `steps`: run the written spec once (default `true`), in this Playwright project |
 | `projectRoot` / `config` | string | As with the other tools |
 
-Reads the agent's recent changes (`git status`, falling back to `git diff HEAD~1`,
+**With `steps`**, the tool walks the flow on the live page first. If a step's locator does
+not work, it stops there, writes nothing and says which step failed. Otherwise it writes a
+spec that replays the steps, asserts the URL path and the accessibility snapshot where the
+flow landed (headings only when the snapshot is long), and runs it once:
+
+```ts
+test('rename in settings', async ({ page }) => {
+  await page.goto('http://localhost:3000/account');
+  await page.getByRole('button', { name: 'Open settings' }).click();
+  await page.getByLabel('Nickname').fill('Ada');
+
+  // End state
+  await expect(page.locator("dialog")).toMatchAriaSnapshot(`
+    - dialog:
+      - heading "Settings" [level=2]
+      - text: Nickname
+      - textbox "Nickname": Ada
+      - button "Save settings"
+  `);
+});
+```
+
+**Without `steps`**, it reads the agent's recent changes (`git status`, falling back to `git diff HEAD~1`,
 then recent mtimes), extracts the locators those files actually declare
 (`data-testid`, `getByRole`, `aria-label`, `placeholder`, `id`, `name`, element text),
 ranks verified-live selectors first, writes a spec built from them, and reports each
@@ -557,16 +602,37 @@ the full `run-test` result, which also becomes the last run for `get-failure` an
 
 | Argument | Type | Description |
 | --- | --- | --- |
-| `view` | `flaky` \| `patterns` \| `test` | `flaky` (default) ranks unstable tests; `patterns` groups failures by kind and normalized error; `test` shows one test's timeline |
+| `view` | `flaky` \| `patterns` \| `slow` \| `trend` \| `commits` \| `test` | `flaky` (default) ranks unstable tests; `patterns` groups failures by kind and normalized error; `slow` lists tests by median duration and flags ones that got slower; `trend` shows failed and flaky executions per day; `commits` names the first bad commit of each failing or flaky test; `test` shows one test's timeline |
 | `test` | string | Substring of a test's file or title (filters every view) |
 | `lastRuns` | number | How many recent runs to analyze (default `30`) |
 | `limit` | number | Max rows (default `15`) |
 
-Every `run-test`, `diagnose-flaky` and `suggest-fix` run appends a line to
+Every `run-test`, `diagnose-flaky`, `suggest-fix` and `load-report` run appends a line to
 `<project>/.playwright-e2e-mcp/history.jsonl` (the folder carries its own `.gitignore`;
 nothing leaves the machine; `PW_MCP_HISTORY=0` turns it off). The flaky view separates
 tests that flip between pass and fail, tests that started failing and stayed red
 (regressed), and tests that failed every run (broken), each with a `PFFP~` timeline.
+
+Each run records the commit it tested (from git locally, from the report's metadata for CI
+runs). The `commits` view uses that to say where a test went bad: the first failing or flaky
+run after its last streak of passes, with the last good commit and a `git diff` to compare
+them.
+
+### `load-report`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `report` | string | A Playwright JSON report inside the project (e.g. `ci-artifacts/results.json`), or a folder of blob-report zips from sharded jobs (merged with the project's `playwright merge-reports`) (required) |
+| `traceDirs` | string[] | Folders inside the project where the job's `test-results` artifact was unpacked (default: the report's folder and its parent) |
+| `commit` / `branch` | string | Override what the report's metadata says (Playwright records it with `captureGitInfo` or on CI) |
+| `record` | boolean | Add the run to the history (default `true`) |
+| `timeoutMs` | number | Limit for merging blob reports (default `120000`) |
+
+Download the artifacts first, for example with
+`gh run download <run-id> -n playwright-report -D ci-artifacts`. The CI machine's absolute
+paths are mapped onto your checkout, so failures point at local files and get-failure can
+open each trace. The run becomes the last run, so the usual loop works on it: `get-failure`,
+then `suggest-fix` (which re-runs the fix locally), or `diagnose-flaky`.
 
 ---
 
@@ -833,7 +899,7 @@ browsers match Playwright 1.63. Mount your project at `/work`; its own
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
-| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, flaky, history, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All thirteen tool definitions cost about 7.3k tokens of context per request; `core` costs about 2.3k |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, CI report, flaky, history, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All fourteen tool definitions cost about 9k tokens of context per request; `core` costs about 2.3k |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |
@@ -951,7 +1017,7 @@ picks the right locator from the snapshot on the first try, which the server doe
 src/
 ├── index.ts            # bin entry point (--version/--help, main-module guard)
 ├── server.ts           # McpServer setup, tool registration, shutdown handling
-├── tools/              # the thirteen tools, the probe script + shared plumbing
+├── tools/              # the fourteen tools, the probe script + shared plumbing
 ├── prompts.ts          # fix-failing-test, triage-flaky-tests
 ├── utils/              # playwright-runner, report-parser, project-detector, path-utils,
 │                       # logger, trace-reader (trace.zip → DOM/network/console),
@@ -1000,7 +1066,7 @@ server over stdio against a live fixture app and a Playwright project under
 `e2e/fixture/`, then drives it exactly like an MCP client and asserts ~40 behaviours
 that only appear end-to-end:
 
-- initialize handshake, 13 tools, 2 prompts, spec tool annotations and object input schemas,
+- initialize handshake, 14 tools, 2 prompts, spec tool annotations and object input schemas,
 - verified locators, locator validation, signed-in pages (`storageState`) and page steps,
 - background runs with progress, run history views, and `suggest-fix` healing a drifted
   locator and an ambiguous one, verifying each with a re-run (and refusing when the
