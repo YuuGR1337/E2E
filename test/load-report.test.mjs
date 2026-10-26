@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { normalizePath } from '../dist/utils/path-utils.js';
 import { foreignRebase, parseReportJson, reportGitInfo } from '../dist/utils/report-parser.js';
 import { loadReportTool } from '../dist/tools/load-report.js';
 import { createToolStore } from '../dist/tools/shared.js';
@@ -84,7 +85,7 @@ test('parseReportJson finds a CI trace in the unpacked artifact folder', () => {
   const parsed = parseReportJson(JSON.stringify(ciReport()), root, undefined, { traceDirs: [path.join(root, 'ci-artifacts')] });
   assert.equal(parsed.failures.length, 1);
   assert.equal(parsed.failures[0].file, 'tests/cart.spec.ts');
-  assert.equal(parsed.failures[0].tracePath, `${root}/ci-artifacts/cart-adds-an-item-chromium/trace.zip`);
+  assert.equal(parsed.failures[0].tracePath, normalizePath(path.join(root, 'ci-artifacts', 'cart-adds-an-item-chromium', 'trace.zip')));
   assert.equal(parsed.git?.commit, 'abc1234def5678');
   // Without the foreign option, CI paths outside the root are never followed.
   assert.equal(parseReportJson(JSON.stringify(ciReport()), root).failures[0].tracePath, undefined);

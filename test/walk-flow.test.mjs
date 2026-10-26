@@ -65,12 +65,12 @@ test('har: replay needs an existing file inside the project; record needs its fo
   const outside = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'pw-har-out-')));
   writeFileSync(path.join(root, 'net.har'), '{}');
   mkdirSync(path.join(root, 'fixtures'));
-  symlinkSync(outside, path.join(root, 'escape'));
+  symlinkSync(outside, path.join(root, 'escape'), 'junction');
   const ctx = ctxFor(root);
   const url = 'http://example.test/';
 
   const replay = await resolvePageState({ har: { path: 'net.har', url: '**/api/**' } }, root, url, ctx);
-  assert.deepEqual(replay.har, { path: `${root}/net.har`, mode: 'replay', url: '**/api/**', notFound: 'abort' });
+  assert.deepEqual(replay.har, { path: path.join(root, 'net.har'), mode: 'replay', url: '**/api/**', notFound: 'abort' });
   assert.equal(describePageState(replay, root), 'HAR replay from `net.har`');
 
   const record = await resolvePageState({ har: { path: 'fixtures/new.har', mode: 'record' } }, root, url, ctx);
