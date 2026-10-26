@@ -217,8 +217,9 @@ server workspace-wide. Freebuff asks you to trust a repository's `.agents/` on f
 
 Some clients only accept a remote HTTPS server. This repo ships a Streamable HTTP bridge you
 can host for free on Vercel, with OAuth sign-in for claude.ai connectors. See
-[Hosted endpoint](docs/hosted-endpoint.md). A serverless function has no browser, so for
-running and fixing tests the local install is the better route.
+[Hosted endpoint](docs/hosted-endpoint.md). On Vercel the page tools (inspect a page, check
+selectors, accessibility and Web Vitals audits) run on a bundled Chromium against public URLs.
+Running and fixing your own tests needs your project, so use the local install for that.
 
 </details>
 
@@ -371,6 +372,7 @@ Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`,
 | `PW_MCP_PASSTHROUGH_ENV` | — | HTTP bridge only: comma-separated extra variables passed to test runs (e.g. `BASE_URL`) |
 | `PW_MCP_MAX_CHILDREN` | `4` | HTTP bridge only: how many test runs and browser probes may run at once |
 | `PW_MCP_BLOCK_PRIVATE_URLS` | off (on for the HTTP bridge) | `1` makes the URL tools refuse loopback, private-network and cloud-metadata addresses, including redirects and subresources |
+| `PW_MCP_SERVERLESS_CHROMIUM` | on for Vercel | Launch the page tools on the bundled serverless Chromium (`@sparticuz/chromium`, Linux x64, Node 22+); `0` turns it off, `1` turns it on elsewhere |
 | `LOG_LEVEL` / `MCP_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` \| `silent`; `LOG_LEVEL` wins when both are set |
 | `LOG_FORMAT` / `MCP_LOG_FORMAT` | `text` | `text`, or `json` (also `ndjson`) for one structured JSON object per line — ready for a log ingester |
 

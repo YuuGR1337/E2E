@@ -593,6 +593,12 @@ function summariseRequests(requests, timings, pageUrl) {
     try {
       pw = req('@playwright/test');
     } catch (errB) {
+      // The hosted bridge ships playwright-core next to its bundled Chromium.
+      try {
+        if (cfg.serverlessChromium) pw = req('playwright-core');
+      } catch (errC) {}
+    }
+    if (!pw) {
       send({
         ok: false,
         kind: 'NO_PLAYWRIGHT',
@@ -628,6 +634,10 @@ function summariseRequests(requests, timings, pageUrl) {
       } else {
         launchOptions.args = ['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'];
       }
+    }
+    if (cfg.serverlessChromium) {
+      launchOptions.executablePath = cfg.serverlessChromium.executablePath;
+      launchOptions.args = cfg.serverlessChromium.args.concat(launchOptions.args || []);
     }
     browser = await pw[engine].launch(launchOptions);
     const contextOptions = { viewport: cfg.viewport || { width: 1280, height: 720 } };
