@@ -45,6 +45,7 @@ const EXPECTED_TOOLS = [
   'get-run-status',
   'inspect-page',
   'list-tests',
+  'load-report',
   'run-test',
   'suggest-fix',
   'validate-selector',
@@ -475,6 +476,22 @@ async function phaseLivePage(client, origin) {
   );
   contains('a mocked JSON body renders the empty state', emptyCart.text, '1 match');
 
+  const aria = await callTool(client, 'inspect-page', { url: `${origin}/cart`, view: 'aria', selector: '#cart', waitFor: "#cart li:not(:has-text('Loading'))" }, 60_000);
+  contains('aria view returns the snapshot', aria.text, '- listitem: Real item');
+  contains('aria view hands back an assertion', aria.text, `await expect(page.locator("#cart")).toMatchAriaSnapshot(\``);
+
+  const harPath = path.join(fixtureRoot, 'test-results', 'cart.har');
+  mkdirSync(path.dirname(harPath), { recursive: true });
+  const recorded = await callTool(client, 'inspect-page', { url: `${origin}/cart`, view: 'aria', selector: '#cart', waitFor: "text=Real item", har: { path: 'test-results/cart.har', mode: 'record', url: '**/api/cart' } }, 60_000);
+  contains('HAR recording is reported', recorded.text, 'recording HAR to `test-results/cart.har`');
+  const har = existsSync(harPath) ? readFileSync(harPath, 'utf8') : '';
+  check('HAR file written with the API response', har.includes('Real item'), har.slice(0, 300));
+  writeFileSync(harPath, har.replace('Real item', 'Item from HAR'));
+  const replayed = await callTool(client, 'inspect-page', { url: `${origin}/cart`, view: 'aria', selector: '#cart', waitFor: 'text=Item from HAR', har: { path: 'test-results/cart.har', url: '**/api/cart' } }, 60_000);
+  contains('HAR replay answers the API from the file', replayed.text, '- listitem: Item from HAR');
+  const webkitPerf = await callTool(client, 'audit-performance', { url: origin, browser: 'webkit' }, 30_000);
+  check('audit-performance refuses other engines', webkitPerf.isError && webkitPerf.text.includes('Chromium only'), webkitPerf.text.slice(0, 300));
+
   const escape = await callTool(client, 'inspect-page', { url: origin, storageState: '../../package.json' }, 30_000);
   check('storageState outside the project is refused', escape.isError && escape.text.includes('INVALID_PATH'), escape.text.slice(0, 300));
 
@@ -651,6 +668,31 @@ async function phaseTestRuns(client, origin) {
     const source = readFileSync(generatedPath, 'utf8');
     contains('generated spec contains a Playwright test', source, 'test(');
   }
+
+  const walkPath = path.join(fixtureRoot, 'tests', 'generated', 'rename-in-settings.spec.ts');
+  const walk = await callTool(
+    client,
+    'generate-e2e-test',
+    {
+      description: 'rename in settings',
+      pageUrl: `${origin}/account`,
+      storageState: '.auth/user.json',
+      assertScope: 'dialog',
+      steps: [
+        { type: 'click', locator: "getByRole('button', { name: 'Open settings' })" },
+        { type: 'fill', locator: "getByLabel('Nickname')", value: 'Ada' },
+      ],
+    },
+    180_000,
+  );
+  contains('walk: every step ran on the live page', walk.text, '**Walked:** 2 step(s)');
+  contains('walk: the spec replays the steps', walk.text, "await page.getByLabel('Nickname').fill('Ada');");
+  contains('walk: the end state is asserted', walk.text, 'textbox "Nickname": Ada');
+  contains('walk: the spec reuses the signed-in session', walk.text, "test.use({ storageState: '.auth/user.json' });");
+  contains('walk: the written spec passes its first run', walk.text, '✅ Verified');
+  rmSync(walkPath, { force: true });
+  const badWalk = await callTool(client, 'generate-e2e-test', { description: 'bad walk', pageUrl: origin, steps: [{ type: 'click', locator: "getByRole('button', { name: 'Nope' })" }] }, 90_000);
+  check('walk: a broken step writes nothing', badWalk.isError && badWalk.text.includes('Nothing was written') && !existsSync(path.join(fixtureRoot, 'tests', 'generated', 'bad-walk.spec.ts')), badWalk.text.slice(0, 400));
 }
 
 async function phaseHistoryAndHeal(client) {
@@ -663,6 +705,12 @@ async function phaseHistoryAndHeal(client) {
 
   const patterns = await callTool(client, 'analyze-history', { view: 'patterns' }, 30_000);
   contains('analyze-history groups failures by cause', patterns.text, '## Failure patterns');
+  const slow = await callTool(client, 'analyze-history', { view: 'slow' }, 30_000);
+  contains('analyze-history lists the slowest tests', slow.text, '## Slowest tests');
+  const trend = await callTool(client, 'analyze-history', { view: 'trend' }, 30_000);
+  contains('analyze-history shows stability by day', trend.text, '## Stability by day');
+  const commits = await callTool(client, 'analyze-history', { view: 'commits' }, 30_000);
+  contains('analyze-history shows when tests went bad', commits.text, '## When each test went bad');
   const timeline = await callTool(client, 'analyze-history', { test: 'inventory sync' }, 30_000);
   contains('analyze-history shows one test timeline', timeline.text, '**Timeline (oldest → newest):**');
 

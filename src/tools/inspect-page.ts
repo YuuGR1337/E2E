@@ -40,9 +40,9 @@ const inspectPageInput = z.object({
     .optional()
     .describe('CSS selector: inspect matches instead of the whole DOM'),
   view: z
-    .enum(['elements', 'locators'])
+    .enum(['elements', 'locators', 'aria'])
     .optional()
-    .describe("'locators': compact map of interactive elements (cheapest); 'elements' (default): DOM inventory"),
+    .describe("'locators': compact map of interactive elements (cheapest); 'aria': accessibility snapshot + toMatchAriaSnapshot check (scoped by selector); 'elements' (default): DOM inventory"),
   waitFor: z
     .string()
     .optional()
@@ -65,6 +65,28 @@ const inspectPageInput = z.object({
 
 export type InspectPageInput = z.infer<typeof inspectPageInput>;
 export const inspectPageSchema = inspectPageInput;
+
+/**
+ * A toMatchAriaSnapshot assertion for a captured snapshot. The template
+ * literal is escaped so backticks and `${` in page text stay literal.
+ */
+export function ariaAssertion(snapshot: string, selector?: string): string {
+  return ['```ts', ariaAssertionCode(snapshot, selector), '```'].join('\n');
+}
+
+/** The assertion statement itself, indented by `indent` spaces. */
+export function ariaAssertionCode(snapshot: string, selector?: string, indent = 0): string {
+  const pad = ' '.repeat(indent);
+  const body = snapshot
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$\{/g, '\\${')
+    .split('\n')
+    .map((line) => `${pad}  ${line}`)
+    .join('\n');
+  const target = selector ? `page.locator(${JSON.stringify(selector)})` : "page.locator('body')";
+  return [`${pad}await expect(${target}).toMatchAriaSnapshot(\``, body, `${pad}\`);`].join('\n');
+}
 
 function renderLocatorLine(element: ElementInfo, position: number): string {
   const best = bestLocator(element);
@@ -99,7 +121,7 @@ function renderElement(element: ElementInfo, position: number): string {
 export const inspectPageTool = {
   name: 'inspect-page',
   description:
-    "Open a URL headlessly and return its elements with Playwright locators proven unique on the page (role + name first), CSS selectors, visibility, text and console messages. storageState/headers open it signed in; actions click/fill first to reach a state. view 'locators' is the compact map.",
+    "Open a URL headlessly and return its elements with Playwright locators proven unique on the page (role + name first), CSS selectors, visibility, text and console messages. storageState/headers open it signed in; actions click/fill first to reach a state. view 'locators' is the compact map; view 'aria' returns the accessibility snapshot plus a ready toMatchAriaSnapshot assertion.",
   inputSchema: inspectPageSchema,
   handler: async (args: InspectPageInput, ctx: ToolContext): Promise<ToolResponse> =>
     guard('inspect-page', async () => {
@@ -108,7 +130,7 @@ export const inspectPageTool = {
       const root = await resolveProjectRoot(args.projectRoot, ctx);
       const state = await resolvePageState(args, root, url, ctx);
       const timeoutMs = args.timeoutMs ?? 45_000;
-      const view = args.selector ? 'elements' : (args.view ?? 'elements');
+      const view = args.view === 'aria' ? 'aria' : args.selector ? 'elements' : (args.view ?? 'elements');
 
       const outcome = await runBrowserScript(
         {
@@ -163,6 +185,33 @@ export const inspectPageTool = {
       lines.push('');
       const login = loginHint(data.finalUrl, state);
       if (login) lines.push(`> 🔒 ${login}`, '');
+
+      if (view === 'aria') {
+        if (data.ariaSnapshot === undefined) {
+          lines.push(`_\`${args.selector}\` matched no element._`);
+          return toolText(lines.join('\n'));
+        }
+        lines.push(
+          `### Accessibility snapshot${args.selector ? ` of \`${args.selector}\`${data.matchCount > 1 ? ` (first of ${data.matchCount})` : ''}` : ''}${data.ariaTruncated ? ' (truncated)' : ''}`,
+          '',
+          '```yaml',
+          data.ariaSnapshot,
+          '```',
+          '',
+        );
+        if (!data.ariaTruncated) {
+          lines.push(
+            '### Assertion',
+            '',
+            'Paste into a test to lock this structure. Trim lines you do not care about; partial snapshots match, and `/regex/` names tolerate changing text.',
+            '',
+            ariaAssertion(data.ariaSnapshot, args.selector),
+          );
+        } else {
+          lines.push('> The snapshot was cut. Pass a narrower `selector` to get a complete one with an assertion.');
+        }
+        return toolText(lines.join('\n'));
+      }
 
       const heading = args.selector
         ? `### Matches for \`${args.selector}\` (${data.matchCount})`

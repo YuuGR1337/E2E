@@ -38,7 +38,7 @@ function send(payload) {
 function classifyError(message) {
   const m = String(message);
   if (/Executable doesn't exist|Please run the following command to install/i.test(m)) {
-    return { kind: 'NO_PLAYWRIGHT', hint: 'Playwright browsers are not installed for this project. Run: npx playwright install chromium' };
+    return { kind: 'NO_PLAYWRIGHT', hint: 'Playwright browsers are not installed for this project. Run: npx playwright install chromium (or firefox / webkit for those engines)' };
   }
   if (/ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_NAME_NOT_RESOLVED|ERR_EMPTY_RESPONSE|getaddrinfo|net::ERR_/i.test(m)) {
     return { kind: 'SERVER_NOT_RUNNING', hint: 'The URL is not reachable. Start your dev server (e.g. npm run dev / npm start) and retry.' };
@@ -604,8 +604,16 @@ function summariseRequests(requests, timings, pageUrl) {
   }
 
   let browser = null;
+  let openContext = null;
   let actionsDone = [];
+  // A recorded HAR is written when its context closes, so close the
+  // context before the browser.
+  const closeBrowser = async () => {
+    if (openContext) await openContext.close().catch(() => undefined);
+    await browser.close();
+  };
   try {
+    const engine = cfg.browser || 'chromium';
     const launchOptions = { headless: true };
     if (cfg.blockPrivate) {
       // SSRF guard: every browser connection (each redirect hop and
@@ -615,15 +623,26 @@ function summariseRequests(requests, timings, pageUrl) {
       launchOptions.proxy = { server: 'http://127.0.0.1:' + proxyPort };
       // WebRTC STUN/TURN over UDP does not go through the proxy; keep it off
       // so a page cannot send UDP to (or scan) the private network.
-      launchOptions.args = ['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'];
+      if (engine === 'firefox') {
+        launchOptions.firefoxUserPrefs = { 'network.proxy.allow_hijacking_localhost': true, 'media.peerconnection.enabled': false };
+      } else {
+        launchOptions.args = ['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'];
+      }
     }
-    browser = await pw.chromium.launch(launchOptions);
+    browser = await pw[engine].launch(launchOptions);
     const contextOptions = { viewport: cfg.viewport || { width: 1280, height: 720 } };
     if (cfg.mobile) Object.assign(contextOptions, { isMobile: true, hasTouch: true, deviceScaleFactor: 1.75 });
     if (cfg.storageState) contextOptions.storageState = cfg.storageState;
     if (cfg.headers) contextOptions.extraHTTPHeaders = cfg.headers;
     if (cfg.testIdAttribute) pw.selectors.setTestIdAttribute(cfg.testIdAttribute);
+    const recording = cfg.har && cfg.har.mode === 'record' && !cfg.snapshotHtmlPath;
+    if (recording) contextOptions.recordHar = { path: cfg.har.path, urlFilter: cfg.har.url, mode: 'minimal' };
     const context = await browser.newContext(contextOptions);
+    openContext = context;
+    // Replay goes first so the network mocks below, registered later, win.
+    if (cfg.har && cfg.har.mode === 'replay' && !cfg.snapshotHtmlPath) {
+      await context.routeFromHAR(cfg.har.path, { url: cfg.har.url, notFound: cfg.har.notFound || 'abort' });
+    }
 
     // Network mocks. Playwright runs the most recently registered handler
     // first, so register in reverse to make the first listed mock win.
@@ -719,7 +738,7 @@ function summariseRequests(requests, timings, pageUrl) {
           durationMs: Date.now() - cfg.startedAt,
         },
       });
-      await browser.close();
+      await closeBrowser();
       process.exit(0);
     }
 
@@ -828,6 +847,20 @@ function summariseRequests(requests, timings, pageUrl) {
         return { matchCount: elements.length, elementCount: document.querySelectorAll('*').length, elements: elements, title: document.title };
       }, { tokens: cfg.healTokens || [], role: cfg.healRole });
       await attachLocators(page, data.elements, 5, 3);
+    } else if (cfg.view === 'aria') {
+      const scope = cfg.selector ? page.locator(cfg.selector) : page.locator('body');
+      const count = await scope.count();
+      data = { matchCount: count, elementCount: count, elements: [], title: await page.title(), finalUrl: page.url() };
+      if (count > 0) {
+        if (typeof scope.ariaSnapshot !== 'function') {
+          throw new Error('ariaSnapshot needs Playwright 1.49 or newer');
+        }
+        const snapshot = await scope.first().ariaSnapshot({ timeout: cfg.waitTimeout || 10000 });
+        const max = cfg.maxHtmlChars || 12000;
+        data.ariaSnapshot = snapshot.slice(0, max);
+        data.ariaTruncated = snapshot.length > max;
+      }
+      data.viewport = page.viewportSize() || undefined;
     } else {
       data = await page.evaluate((input) => {
         const h = window.__pwmcp;
@@ -891,13 +924,13 @@ function summariseRequests(requests, timings, pageUrl) {
     data.finalUrl = data.finalUrl || page.url();
     data.durationMs = Date.now() - cfg.startedAt;
     send({ ok: true, data: data });
-    await browser.close();
+    await closeBrowser();
     process.exit(0);
   } catch (err) {
     const message = err && err.message ? err.message : String(err);
     const classified = classifyError(message);
     send({ ok: false, kind: classified.kind, error: message, hint: classified.hint, actionsDone: err && err.actionsDone });
-    try { if (browser) await browser.close(); } catch (closeErr) { /* ignore */ }
+    try { if (browser) await closeBrowser(); } catch (closeErr) { /* ignore */ }
     process.exit(1);
   }
 })().catch((err) => {

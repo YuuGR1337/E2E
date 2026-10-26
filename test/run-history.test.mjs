@@ -85,3 +85,52 @@ test('recordRun honours PW_MCP_HISTORY=0', async () => {
     delete process.env.PW_MCP_HISTORY;
   }
 });
+
+test('slowTests: passing runs only, slowest first, slowdown after six runs', async () => {
+  const { slowTests } = await import('../dist/utils/run-history.js');
+  const ms = [100, 110, 90, 100, 300, 320];
+  const history = ms.map((v, i) => entry(`2026-10-0${i + 1}T00:00:00Z`, [t('slow', 'passed', { ms: v }), t('fast', 'passed', { ms: 10 }), t('timeout', 'timedOut', { ms: 30_000 })]));
+  const slow = slowTests(history);
+  assert.deepEqual(slow.map((s) => s.key.includes('slow') ? 'slow' : 'fast'), ['slow', 'fast']);
+  assert.equal(slow[0].runs, 6);
+  assert.equal(slow[0].maxMs, 320);
+  assert.equal(slow[0].slowdown, 3.1);
+  assert.ok(!slow.some((s) => s.key.includes('timeout')), 'failed runs do not count');
+});
+
+test('dailyTrend: one row per day with the unstable rate', async () => {
+  const { dailyTrend } = await import('../dist/utils/run-history.js');
+  const days = dailyTrend([
+    entry('2026-10-01T08:00:00Z', [t('a', 'passed'), t('b', 'failed')]),
+    entry('2026-10-01T09:00:00Z', [t('a', 'flaky'), t('b', 'failed'), t('c', 'skipped')]),
+    entry('2026-10-02T09:00:00Z', [t('a', 'passed'), t('b', 'passed')]),
+  ]);
+  assert.deepEqual(days.map((d) => [d.day, d.runs, d.executions, d.failed, d.flaky, d.unstableTests]), [
+    ['2026-10-01', 2, 4, 2, 1, 2],
+    ['2026-10-02', 1, 2, 0, 0, 0],
+  ]);
+  assert.equal(days[0].unstableRate, 0.75);
+});
+
+test('breakingCommits: names the first bad commit after the last passing streak', async () => {
+  const { breakingCommits } = await import('../dist/utils/run-history.js');
+  const at = (i, commit, tests) => ({ ...entry(`2026-10-${String(i).padStart(2, '0')}T00:00:00Z`, tests), commit, subject: `subject ${commit}` });
+  const list = breakingCommits([
+    at(1, 'c1', [t('broke', 'passed'), t('flaky', 'passed'), t('lucky', 'failed'), t('fine', 'passed')]),
+    at(2, 'c2', [t('broke', 'passed'), t('flaky', 'passed'), t('lucky', 'passed'), t('fine', 'passed')]),
+    at(3, 'c3', [t('broke', 'failed'), t('flaky', 'flaky'), t('lucky', 'passed'), t('fine', 'passed')]),
+    at(4, 'c4', [t('broke', 'failed'), t('flaky', 'passed'), t('lucky', 'passed'), t('fine', 'passed')]),
+    at(5, 'c5', [t('broke', 'failed'), t('flaky', 'failed'), t('lucky', 'passed'), t('fine', 'passed')]),
+  ]);
+  const byTitle = Object.fromEntries(list.map((b) => [b.test.split(' › ').pop().replace(/ \[.*$/, ''), b]));
+  const broke = list.find((b) => b.test.includes('broke'));
+  const flaky = list.find((b) => b.test.includes('flaky'));
+  assert.ok(broke && flaky, JSON.stringify(Object.keys(byTitle)));
+  assert.equal(broke.firstBad.commit, 'c3');
+  assert.equal(broke.firstBad.subject, 'subject c3');
+  assert.equal(broke.lastGood.commit, 'c2');
+  assert.equal(broke.since, 'failing');
+  assert.equal(flaky.firstBad.commit, 'c3');
+  assert.equal(flaky.since, 'flaky');
+  assert.ok(!list.some((b) => b.test.includes('lucky') || b.test.includes('fine')), 'recovered and healthy tests are left out');
+});

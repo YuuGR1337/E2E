@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import type { ElementInfo, ToolContext, ToolResponse } from '../types/index.js';
+import { PlaywrightMcpError } from '../types/index.js';
 import {
   assertHttpUrl,
   bestLocator,
@@ -393,6 +394,11 @@ export const auditPerformanceTool = {
     guard('audit-performance', async () => {
       const url = assertHttpUrl(args.url);
       await assertUrlAllowed(url);
+      if (args.browser && args.browser !== 'chromium') {
+        throw new PlaywrightMcpError('audit-performance measures in Chromium only', 'INVALID_PATH', {
+          hint: 'Web Vitals, byte counts and throttling come from the Chrome DevTools Protocol. Leave browser unset.',
+        });
+      }
       const root = await resolveProjectRoot(args.projectRoot, ctx);
       const state = await resolvePageState(args, root, url, ctx);
       const timeoutMs = args.timeoutMs ?? 60_000;

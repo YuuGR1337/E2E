@@ -362,6 +362,15 @@ export const pageStateShape = {
   viewport: z
     .object({ width: z.number().int().min(200).max(4_000), height: z.number().int().min(200).max(4_000) })
     .optional(),
+  har: z
+    .object({
+      path: z.string().min(1).max(500).describe('.har or .zip inside the project'),
+      mode: z.enum(['replay', 'record']).optional().describe("'replay' (default) answers requests from the file; 'record' saves the traffic"),
+      url: z.string().max(500).optional().describe("Glob limiting the requests, e.g. '**/api/**'"),
+      notFound: z.enum(['abort', 'fallback']).optional().describe("replay: requests missing from the file abort (default) or go to the network"),
+    })
+    .optional(),
+  browser: z.enum(['chromium', 'firefox', 'webkit']).optional().describe('Engine (default chromium)'),
 };
 
 export interface PageStateInput {
@@ -370,7 +379,11 @@ export interface PageStateInput {
   actions?: Array<z.infer<typeof pageActionSchema>>;
   routes?: Array<z.infer<typeof routeMockSchema>>;
   viewport?: { width: number; height: number };
+  har?: { path: string; mode?: 'replay' | 'record'; url?: string; notFound?: 'abort' | 'fallback' };
+  browser?: BrowserEngine;
 }
+
+export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
 
 export interface ResolvedRouteMock {
   url: string;
@@ -390,6 +403,49 @@ export interface ResolvedPageState {
   actions?: Array<{ type: string; label: string; locator?: LocatorCall[]; value?: string; url?: string; ms?: number }>;
   routes?: ResolvedRouteMock[];
   viewport?: { width: number; height: number };
+  har?: { path: string; mode: 'replay' | 'record'; url?: string; notFound: 'abort' | 'fallback' };
+  browser?: BrowserEngine;
+}
+
+/**
+ * Validate a HAR option. The file (and, when recording, its folder) must
+ * sit inside the project with symlinks resolved, so a replay cannot read
+ * and a recording cannot write anywhere else.
+ */
+async function resolveHar(
+  har: NonNullable<PageStateInput['har']>,
+  root: string,
+  ctx: ToolContext,
+): Promise<NonNullable<ResolvedPageState['har']>> {
+  if (ctx.restricted) {
+    throw new PlaywrightMcpError('har is not available on this server', 'INVALID_PATH', {
+      hint: 'This endpoint does not read or write files in the project.',
+    });
+  }
+  const mode = har.mode ?? 'replay';
+  const absolute = sanitizeUserPath(har.path.trim(), root);
+  if (!/\.(har|zip)$/i.test(absolute)) {
+    throw new PlaywrightMcpError(`har.path must end in .har or .zip: ${har.path}`, 'INVALID_PATH');
+  }
+  const info = await stat(toNativePath(absolute)).catch(() => null);
+  if (mode === 'replay') {
+    if (!info?.isFile()) {
+      throw new PlaywrightMcpError(`HAR file not found: ${relativeToRoot(root, absolute)}`, 'INVALID_PATH', {
+        hint: "Record one first: pass har: { path, mode: 'record' } with the same URL.",
+      });
+    }
+    await assertRealPathInside(absolute, root);
+  } else {
+    if (info && !info.isFile()) throw new PlaywrightMcpError(`har.path is not a file: ${har.path}`, 'INVALID_PATH');
+    const folder = path.dirname(absolute);
+    const folderInfo = await stat(toNativePath(folder)).catch(() => null);
+    if (!folderInfo?.isDirectory()) {
+      throw new PlaywrightMcpError(`Folder for the HAR does not exist: ${relativeToRoot(root, folder)}`, 'INVALID_PATH');
+    }
+    await assertRealPathInside(folder, root);
+    if (info) await assertRealPathInside(absolute, root);
+  }
+  return { path: toNativePath(absolute), mode, url: har.url, notFound: har.notFound ?? 'abort' };
 }
 
 function assertHeaders(headers: Record<string, string>, what: string): void {
@@ -490,6 +546,15 @@ export async function resolvePageState(
     out.headers = input.headers;
   }
   if (input.viewport) out.viewport = input.viewport;
+  if (input.har) out.har = await resolveHar(input.har, root, ctx);
+  if (input.browser && input.browser !== 'chromium') {
+    if (input.browser === 'webkit' && blockPrivateUrls()) {
+      throw new PlaywrightMcpError('webkit is not available while private addresses are blocked', 'INVALID_PATH', {
+        hint: "WebKit cannot route every connection through the address guard. Use 'chromium' or 'firefox'.",
+      });
+    }
+    out.browser = input.browser;
+  }
   if (input.routes && input.routes.length > 0) out.routes = resolveRouteMocks(input.routes);
   if (input.actions && input.actions.length > 0) {
     out.actions = [];
@@ -536,6 +601,11 @@ export function describePageState(state: ResolvedPageState, root: string): strin
   if (state.headers) parts.push(`${Object.keys(state.headers).length} extra header(s)`);
   if (state.actions?.length) parts.push(`${state.actions.length} step(s) run first`);
   if (state.routes?.length) parts.push(`${state.routes.length} mocked route(s)`);
+  if (state.har) {
+    const file = `\`${relativeToRoot(root, state.har.path)}\``;
+    parts.push(state.har.mode === 'record' ? `recording HAR to ${file}` : `HAR replay from ${file}`);
+  }
+  if (state.browser) parts.push(state.browser);
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 
@@ -573,7 +643,7 @@ export interface BrowserScriptConfig extends Omit<ResolvedPageState, never> {
   /** Parsed locator chain for validate / screenshot modes. */
   selectorChain?: LocatorCall[];
   /** inspect: 'elements' (DOM inventory) or 'locators' (compact locator map). */
-  view?: 'elements' | 'locators';
+  view?: 'elements' | 'locators' | 'aria';
   /** heal: words from the broken locator, and its role when it had one. */
   healTokens?: string[];
   healRole?: string;
@@ -628,6 +698,9 @@ export interface BrowserScriptData {
   a11y?: AccessibilityScan;
   /** mode 'perf': lab Web Vitals and resource stats; element fields index `elements`. */
   perf?: PerformanceScan;
+  /** inspect view 'aria': the YAML accessibility snapshot of the scope. */
+  ariaSnapshot?: string;
+  ariaTruncated?: boolean;
   /** Requests each network mock in `routes` handled, by index. */
   routeHits?: number[];
 }

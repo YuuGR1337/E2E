@@ -101,7 +101,7 @@ test('initialize handshake answers with server info', async () => {
   assert.match(res.headers.get('content-type') ?? '', /(?:application\/json|text\/event-stream)/);
 });
 
-test('tools/list exposes all thirteen tools', async () => {
+test('tools/list exposes all fourteen tools', async () => {
   const { res, json } = await post({
     jsonrpc: '2.0',
     id: 2,
@@ -122,6 +122,7 @@ test('tools/list exposes all thirteen tools', async () => {
     'get-run-status',
     'inspect-page',
     'list-tests',
+    'load-report',
     'run-test',
     'suggest-fix',
     'validate-selector',
