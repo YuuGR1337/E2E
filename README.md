@@ -61,6 +61,26 @@ red at HEAD ─▶ bisect-failure (runs it across git history, names the breakin
   with Playwright MCP plus a shell ([benchmark](#benchmark)).
 - **Free and open source.** MIT, no account, no API key, no telemetry, no paid tier.
 
+## 🚀 What only this MCP does
+
+Most testing MCPs let an AI drive a browser: Microsoft's Playwright MCP, Chrome DevTools MCP,
+ExecuteAutomation's mcp-playwright and the Selenium MCP. They're great for clicking through a
+page. None of them, as of October 2026, does the following. This one does:
+
+| Capability | What you get |
+| --- | --- |
+| 🎯 **Find the commit that broke a test** | `bisect-failure` runs the test across your git history, in a temporary worktree that leaves your checkout alone, and names the first bad commit with its diff and the failure |
+| 🧪 **Flake-risk audit of your test code** | `audit-tests` finds hard waits, one-shot assertions, missing `await`s and fragile selectors. It ranks them by how flaky those tests really were, then applies the safe rewrites and re-runs them to prove them |
+| ✅ **Fixes that prove themselves** | `suggest-fix` swaps in a locator proven unique on the DOM at failure, re-runs the test and reverts if it's still red. It refuses to patch over a real app bug |
+| 🔬 **Flaky-test verdicts with evidence** | `diagnose-flaky` repeats tests with retries off and tells a race from shared state from **test order**, naming the test it depends on and the seed that reproduces it |
+| 📈 **Memory of every run** | `analyze-history` ranks flaky, regressed and broken tests, groups failures by cause, tracks slow tests and names the commit where each one went bad |
+| 🏗️ **Diagnose CI failures locally** | `load-report` loads a CI job's report and traces (sharded too), so the same diagnosis and verified fixes work on failures from CI |
+| 💬 **One-click fixes on pull requests** | The GitHub Action verifies each fix in CI and posts it as a **suggested change** reviewers apply with one click |
+| ♿⚡ **Audits that hand back tests** | Accessibility (axe-core) and Web Vitals audits return verified locators for each problem plus a ready regression or budget test |
+
+It works alongside a browser MCP rather than replacing it: that one drives the page, and this one
+keeps your suite green.
+
 ## What you can ask
 
 | | You ask your AI… | It does this |
