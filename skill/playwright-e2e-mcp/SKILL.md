@@ -13,7 +13,7 @@ and concrete next steps. It can also propose and apply a verified fix for a brok
 locator, inspect pages behind a login, run long suites in the background and keep
 a local history of every run.
 
-This skill is written for playwright-e2e-mcp 0.6.0 and works with 0.2.0 or
+This skill is written for playwright-e2e-mcp 0.6.1 and works with 0.2.0 or
 newer. If `suggest-fix`, `get-run-status` or `analyze-history` is missing, the
 server is older than 0.2.0: use the steps that do not need those tools and tell
 the user to update it. `diagnose-flaky`'s per-test table and `isolate` option
@@ -119,6 +119,11 @@ fresh browser, so a signed-in page shows the login screen unless you pass state:
   or log credentials.
 - `actions`: up to 20 steps after load (`click`, `fill`, `press`, `check`,
   `select`, `hover`, `wait`, `goto`, ...) to open a modal or reach a later step.
+  Each call opens a fresh browser, so put the login steps in the same list and
+  end with a `wait` on what the state shows. Reach into an iframe with
+  `frameLocator('#frame').getByLabel('Card number')` (0.6.1+). Each step waits
+  `actionTimeoutMs` (default 10000, 0.6.1+); a failed step reports Playwright's
+  call log and the page URL, which usually name the cause (an overlay, a redirect).
 - `routes`: up to 20 network mocks applied before load, first match wins:
   `{ "url": "**/api/cart", "json": { "items": [] } }` for an empty state,
   `"status": 500` for an error state, `"abort": true` to drop a third party,
@@ -239,7 +244,7 @@ with the commit it tested. `analyze-history` views:
   `selector` for one region) returns the accessibility snapshot and a
   `toMatchAriaSnapshot` assertion to paste into a spec.
 - **Set up CI:** when the user wants the same diagnosis on every pull request,
-  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.6.0`) or the
+  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.6.1`) or the
   `npx -y playwright-e2e-mcp ci` command in `references/setup.md`. It writes the
   run, flaky verdicts and fix diffs to the job summary and one PR comment.
 - **Accessibility:** `audit-accessibility` with `url` runs axe-core against
