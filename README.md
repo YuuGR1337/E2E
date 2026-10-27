@@ -253,8 +253,8 @@ Running and fixing your own tests needs your project, so use the local install f
 | --- | --- |
 | Skill only, any agent | `npx skills add xsignon-secure/E2E` |
 | MCP Registry | `io.github.xsignon-secure/E2E` ([listing](https://registry.modelcontextprotocol.io/)); registry-aware clients find it there |
-| Straight from GitHub, no npm | `npx -y github:xsignon-secure/E2E#v0.5.1` (pin a release tag) |
-| Release tarball | `npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.5.1/playwright-e2e-mcp-0.5.1.tgz` |
+| Straight from GitHub, no npm | `npx -y github:xsignon-secure/E2E#v0.6.0` (pin a release tag) |
+| Release tarball | `npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.6.0/playwright-e2e-mcp-0.6.0.tgz` |
 | Docker | `docker run -i --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp` (published on each release; see [Development](docs/development.md#docker)) |
 | Local checkout | `"command": "node", "args": ["/path/to/E2E/dist/index.js"]` |
 
@@ -271,16 +271,19 @@ Run my Playwright tests and fix whatever fails.
 Your agent should run the suite, read the failure, and propose a fix it has re-run. To check the
 setup without your own tests, ask it to run `examples/sample-test.spec.ts` from this repo.
 
-## What's new in 0.5
+## What's new in 0.6
 
-- **Diagnose CI failures:** `load-report` reads a CI job's report (or sharded blob reports)
-  and its traces, so the same diagnosis and verified fixes work on failures from CI.
-- **Know which commit broke a test:** `analyze-history` adds `commits`, `slow` and `trend` views.
-- **Write tests by walking the flow:** `generate-e2e-test` with `steps` runs them on the live
-  page, writes the spec with end-state assertions, and runs it once to prove it passes.
-- **Performance audits:** `audit-performance` measures Web Vitals and hands back a budget test.
-- **More page control:** aria snapshots with ready `toMatchAriaSnapshot` assertions, network
-  mocks, HAR record/replay, and Chromium, Firefox or WebKit.
+- **Find the commit that broke a test:** `bisect-failure` runs the test across git history in a
+  temporary worktree and names the first bad commit, its changes and the failure there.
+- **Flake-risk audit:** `audit-tests` finds hard waits, one-shot assertions, missing `await`s and
+  fragile selectors, ranked by real flakiness, and applies the safe rewrites with a verifying run.
+- **One-click fixes on pull requests:** the GitHub Action proves each fix in CI and posts it as a
+  suggested change.
+- **`doctor`:** `npx playwright-e2e-mcp doctor` checks Node, Playwright, browsers and client setup.
+- **Structured results:** every tool returns JSON next to its Markdown, with output schemas.
+- **Phones, tablets, Chrome and Edge:** `device` presets and `channel` for every page tool, and a
+  Docker image on `ghcr.io`.
+- **Node 22 or newer** is now required, and the hosted endpoint limits guessing of its key.
 
 [All release notes](https://github.com/xsignon-secure/E2E/releases)
 
@@ -372,7 +375,7 @@ steps:
   - uses: actions/setup-node@v6
     with: { node-version: 24 }
   - run: npm ci && npx playwright install --with-deps chromium
-  - uses: xsignon-secure/E2E@v0.5.1
+  - uses: xsignon-secure/E2E@v0.6.0
     with:
       flaky-runs: 3      # 0 skips the flaky verdict
       suggest: 2         # suggest-fix diffs for the first 2 failures
