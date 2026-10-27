@@ -98,8 +98,8 @@ test('sanitizeTestPathArgument supports file:line and blocks escapes', async () 
 
 test('assertHttpUrl accepts http(s) and rejects everything else', () => {
   assert.equal(assertHttpUrl('http://localhost:3000/login'), 'http://localhost:3000/login');
-  assert.throws(() => assertHttpUrl('ftp://example.com'), (err) => err.kind === 'INVALID_PATH');
-  assert.throws(() => assertHttpUrl('not a url'), (err) => err.kind === 'INVALID_PATH');
+  assert.throws(() => assertHttpUrl('ftp://example.com'), (err) => err.kind === 'INVALID_INPUT');
+  assert.throws(() => assertHttpUrl('not a url'), (err) => err.kind === 'INVALID_INPUT');
 });
 
 test('tool responses are well-formed MCP content blocks', () => {

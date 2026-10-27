@@ -36,6 +36,8 @@ export type ErrorKind =
   | 'NO_CONFIG'
   | 'MULTIPLE_CONFIGS'
   | 'INVALID_PATH'
+  | 'INVALID_INPUT'
+  | 'NAVIGATION_FAILED'
   | 'SERVER_NOT_RUNNING'
   | 'TIMEOUT'
   | 'BROWSER_CRASH'

@@ -158,6 +158,17 @@ test('tools/call round-trips through the adapter', async () => {
   assert.ok(text.length > 0, 'tool returned empty text');
 });
 
+test('unknown arguments are named in the result instead of dropped silently', async () => {
+  const { json } = await post({
+    jsonrpc: '2.0',
+    id: 31,
+    method: 'tools/call',
+    params: { name: 'list-tests', arguments: { Filter: 'nothing-matches', bogus: true } },
+  });
+  const text = json?.result?.content?.[0]?.text ?? '';
+  assert.match(text, /Ignored unknown arguments: `Filter` \(did you mean `filter`\?\), `bogus`/);
+});
+
 test('GET without a session is rejected, not hung', async () => {
   const res = await fetch(`${base}/mcp`, {
     method: 'GET',

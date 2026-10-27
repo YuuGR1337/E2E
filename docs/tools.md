@@ -24,6 +24,21 @@ described by each tool's `outputSchema`:
 | `audit-performance` | `url`, `metrics[]` (`id`, `value`, `unit`, `rating`, `budget`, `overBudget`) |
 | `audit-tests` | `findings[]` (`file`, `line`, `rule`, `severity`, `message`, `fix`, `test`), `total`, `truncated`, `applied`, `verified` |
 | `bisect-failure` | `status` (`found`, `ambiguous`, `max-steps`, `not-failing`, `good-fails`), `firstBad` (`sha`, `subject`, `author`, `date`, `files`), `steps[]` (`commit`, `verdict`, `note`) |
+| `validate-selector` | `url`, `valid`, `matches`, `locator` (a verified unique locator when exactly one element matches), `httpStatus` |
+
+`inspect-page` adds `url`, `matches` and `httpStatus` without declaring a schema.
+
+Error kinds tell an agent what to do next: `INVALID_INPUT` (fix the arguments),
+`INVALID_PATH` (a file or folder outside the project or missing), `TIMEOUT` (an element never
+became ready, or the whole call ran past `timeoutMs`), `NAVIGATION_FAILED` (a redirect loop, a
+port browsers refuse, a rejected certificate), `SERVER_NOT_RUNNING` (connection refused or the
+host does not resolve: start the app), `NO_PLAYWRIGHT` (install the browsers) and
+`BROWSER_CRASH`. A failed action also reports the page URL at that moment and the last lines
+of Playwright's call log, which name what blocked it (for example, another element that
+intercepts pointer events).
+
+Arguments a tool does not have are ignored and named at the top of the result, with the
+closest real name (`waitfor` → `waitFor`).
 
 The schemas add about 2.5k tokens to the tool list. `PW_MCP_OUTPUT_SCHEMAS=0` leaves them
 out; results still carry the same fields.
@@ -38,7 +53,8 @@ out; results still carry the same fields.
 | --- | --- | --- |
 | `storageState` | string | Path inside the project to a Playwright storageState JSON (cookies + localStorage), e.g. `playwright/.auth/user.json` from your setup project. Defaults to `PW_MCP_STORAGE_STATE` |
 | `headers` | object | Extra HTTP headers for every request, e.g. `{ "Authorization": "Bearer …" }` |
-| `actions` | array | Up to 20 steps run after load: `{ "type": "click" \| "dblclick" \| "hover" \| "fill" \| "press" \| "check" \| "uncheck" \| "select" \| "wait" \| "goto", "locator"?, "value"?, "url"?, "ms"? }`. Locators use Playwright syntax, e.g. `getByRole('button', { name: 'Open settings' })` |
+| `actions` | array | Up to 20 steps run in order after load: `{ "type": "click" \| "dblclick" \| "hover" \| "fill" \| "press" \| "check" \| "uncheck" \| "select" \| "wait" \| "goto", "locator"?, "value"?, "url"?, "ms"? }`. Locators use Playwright syntax, e.g. `getByRole('button', { name: 'Open settings' })`; reach into an iframe with `frameLocator('#checkout').getByLabel('Card number')` or `locator('#checkout').contentFrame()…`. Each call opens a fresh browser, so a login belongs in the same `actions` list (or use `storageState`); end with a `wait` on something the target state shows |
+| `actionTimeoutMs` | number | How long each action waits for its element to be visible, enabled and uncovered (default `10000`, max `120000`). Keep `timeoutMs` above the total |
 | `routes` | array | Up to 20 network mocks applied before the page loads, first match wins: `{ "url": "**/api/cart", "method"?, "status"?, "json"? \| "body"?, "contentType"?, "headers"?, "abort"?, "delayMs"? }`. `json`, `body` or `status` fulfils the request, `abort: true` fails it, and `delayMs` alone slows the real request |
 | `viewport` | object | `{ "width": 390, "height": 844 }` (default 1280×720) |
 | `har` | object | `{ "path": "tests/fixtures/cart.har", "mode"?: "replay" \| "record", "url"?: "**/api/**", "notFound"?: "abort" \| "fallback" }`. `replay` (default) answers matching requests from the file, `record` saves the page's traffic to it. The file and its folder must be inside the project. `routes` mocks still win over the HAR |
@@ -186,13 +202,16 @@ Uses `playwright test --list` when Playwright works, and **falls back to a sourc
 | --- | --- | --- |
 | `url` | string | Live page to test against (required) |
 | `selector` | string | CSS, a Playwright selector (`text=`, `role=`, `>>`) or a locator expression such as `getByRole('button', { name: 'Save' }).first()` (required) |
+| `waitFor` | string | Wait for this selector to be visible before counting, for elements that render late (the count is otherwise taken once, right after load) |
 | `projectRoot` | string | Project whose Playwright launches the browser |
 | `timeoutMs` | number | Overall limit, default `45000` |
 | `storageState` / `headers` / `actions` / `viewport` | — | [Page state](#page-state-signed-in-pages-headers-and-steps) |
 
 Locator expressions are parsed into a whitelisted call chain (`getByRole`, `getByText`,
 `getByLabel`, `getByPlaceholder`, `getByAltText`, `getByTitle`, `getByTestId`, `locator`,
-`first`, `last`, `nth`, `filter`) and are never evaluated as code.
+`first`, `last`, `nth`, `filter`, and `frameLocator` / `contentFrame` for iframes) and are
+never evaluated as code. Inside an iframe, the suggested unique locators keep the frame step
+in front.
 
 Verdicts: `✅ VALID — N matches` with a sample of matches and a **unique locator** for each,
 a strict-mode warning when more than one element matches, a hint when a CSS selector is

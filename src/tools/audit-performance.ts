@@ -395,7 +395,7 @@ export const auditPerformanceTool = {
       const url = assertHttpUrl(args.url);
       await assertUrlAllowed(url);
       if (args.browser && args.browser !== 'chromium') {
-        throw new PlaywrightMcpError('audit-performance measures in Chromium only', 'INVALID_PATH', {
+        throw new PlaywrightMcpError('audit-performance measures in Chromium only', 'INVALID_INPUT', {
           hint: 'Web Vitals, byte counts and throttling come from the Chrome DevTools Protocol. Leave browser unset.',
         });
       }

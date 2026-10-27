@@ -555,7 +555,7 @@ export const generateE2ETestTool = {
 
       if (args.steps && args.steps.length > 0) {
         if (!entryUrl) {
-          throw new PlaywrightMcpError('Walking a flow needs a start URL', 'INVALID_PATH', {
+          throw new PlaywrightMcpError('Walking a flow needs a start URL', 'INVALID_INPUT', {
             hint: 'Pass pageUrl, or set baseURL in playwright.config.',
           });
         }

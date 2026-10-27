@@ -42,3 +42,17 @@ test('parseLocator: argument shapes are checked per method', () => {
   assert.throws(() => parseLocator("getByRole('a').filter({ has: 'x' })"), /not supported/);
   assert.throws(() => parseLocator('locator(1)'), /selector string/);
 });
+
+test('parseLocator: iframe steps chain into the frame and must end inside it', () => {
+  const viaFrame = parseLocator("frameLocator('#pay').getByLabel('Card number')");
+  assert.deepEqual(viaFrame.map((c) => c.method), ['frameLocator', 'getByLabel']);
+  assert.equal(formatLocator(viaFrame), "frameLocator('#pay').getByLabel('Card number')");
+  assert.equal(isLocatorExpression("page.frameLocator('#pay').locator('input')"), true);
+  const viaContent = parseLocator("locator('#pay').contentFrame().getByRole('button', { name: 'Pay' })");
+  assert.equal(formatLocator(viaContent), "locator('#pay').contentFrame().getByRole('button', { name: 'Pay' })");
+  assert.throws(() => parseLocator("frameLocator('#pay')"), /switches into an iframe/);
+  assert.throws(() => parseLocator("locator('#pay').contentFrame()"), /switches into an iframe/);
+  assert.throws(() => parseLocator('frameLocator(1).locator("a")'), /iframe selector string/);
+  assert.throws(() => parseLocator("getByRole('a').contentFrame('x').locator('b')"), /takes no arguments/);
+  assert.throws(() => parseLocator("getByRole('a').evaluate(() => 1)"), (err) => err.kind === 'INVALID_INPUT');
+});
