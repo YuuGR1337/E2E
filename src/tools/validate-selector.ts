@@ -41,6 +41,10 @@ const validateSelectorInput = z.object({
     .string()
     .optional()
     .describe('Project whose Playwright launches the browser (default: server root)'),
+  waitFor: z
+    .string()
+    .optional()
+    .describe('Wait for this selector to be visible first (for elements that render late)'),
   ...pageStateShape,
   timeoutMs: z
     .number()
@@ -71,13 +75,19 @@ function invalid(selector: string, reason: string): ToolResponse {
       '',
       "Use **inspect-page** with `view: 'locators'` to see verified locators for the live elements.",
     ].join('\n'),
+    { valid: false, matches: 0 },
   );
+}
+
+/** One line on a page that answered with an error status. */
+function statusLine(status: number | undefined): string | undefined {
+  return status !== undefined && status >= 400 ? `> ⚠️ The page answered **HTTP ${status}**, so these results describe its error page.` : undefined;
 }
 
 export const validateSelectorTool = {
   name: 'validate-selector',
   description:
-    "Check a CSS selector, Playwright selector or locator (getByRole/getByTestId…, .first(), .filter()) on a live page: validity, match count (actions need exactly 1), sample matches and a sturdier verified locator for each. Accepts storageState/headers/actions.",
+    "Check a CSS selector, Playwright selector or locator (getByRole/getByTestId…, .first(), .filter(), frameLocator() for iframes) on a live page: validity, match count (actions need exactly 1), sample matches and a sturdier verified locator for each. Counts once after load: use waitFor or actions for late elements. Accepts storageState/headers/actions.",
   inputSchema: validateSelectorSchema,
   handler: async (args: ValidateSelectorInput, ctx: ToolContext): Promise<ToolResponse> =>
     guard('validate-selector', async () => {
@@ -104,7 +114,9 @@ export const validateSelectorTool = {
           projectRoot: root,
           url,
           selectorChain: chain,
+          waitFor: args.waitFor,
           gotoTimeout: Math.max(5_000, timeoutMs - 5_000),
+          waitTimeout: Math.min(10_000, Math.max(3_000, timeoutMs - 5_000)),
           startedAt: Date.now(),
         },
         { timeoutMs, signal: ctx.signal },
@@ -125,17 +137,20 @@ export const validateSelectorTool = {
       const kind = isLocatorExpression(selector) ? 'locator' : 'selector';
       const lines: string[] = [];
       const stateLine = describePageState(state, root);
+      const status = statusLine(data.httpStatus);
+      const httpStatus = data.httpStatus !== undefined ? { httpStatus: data.httpStatus } : {};
       if (data.matchCount === 0) {
         lines.push(`## ✅ VALID — 0 matches`, '', `\`${selector}\` is a valid ${kind} but matched nothing on ${url}.`, '');
+        if (status) lines.push(status, '');
         if (stateLine) lines.push(`**Page state:** ${stateLine}`, '');
         const mocks = describeRouteHits(state, data.routeHits);
         if (mocks.length > 0) lines.push('**Network mocks:**', ...mocks, '');
         const login = loginHint(data.finalUrl, state);
         if (login) lines.push(`> 🔒 ${login}`, '');
         lines.push(
-          "**How to fix:** confirm the element exists in this state (it may appear only after an interaction: pass `actions`). Run **inspect-page** with `view: 'locators'` on the same URL to list real, verified locators.",
+          "**How to fix:** confirm the element exists in this state. It may render late (pass `waitFor`), appear only after an interaction (pass `actions`), or sit inside an iframe (start the locator with `frameLocator('#frame')`). Run **inspect-page** with `view: 'locators'` on the same URL to list real, verified locators.",
         );
-        return toolText(lines.join('\n'));
+        return toolText(lines.join('\n'), { url, valid: true, matches: 0, ...httpStatus });
       }
 
       lines.push(`## ✅ VALID — ${data.matchCount} match${data.matchCount === 1 ? '' : 'es'}`, '');
@@ -144,6 +159,7 @@ export const validateSelectorTool = {
       const mocks = describeRouteHits(state, data.routeHits);
       if (mocks.length > 0) lines.push('**Network mocks:**', ...mocks);
       lines.push('');
+      if (status) lines.push(status, '');
       const matches = data.elements;
       for (let i = 0; i < matches.length; i += 1) {
         const element = matches[i];
@@ -171,6 +187,13 @@ export const validateSelectorTool = {
       if (hidden > 0 && hidden === matches.length) {
         lines.push('> ⚠️ All sampled matches are **hidden** — `toBeVisible()` will fail. Check parent elements for `display: none` / `visibility: hidden`.', '');
       }
-      return toolText(lines.join('\n'));
+      const best = matches[0] ? bestLocator(matches[0]) : undefined;
+      return toolText(lines.join('\n'), {
+        url,
+        valid: true,
+        matches: data.matchCount,
+        ...(data.matchCount === 1 ? { locator: best ?? formatLocator(chain) } : {}),
+        ...httpStatus,
+      });
     }),
 };

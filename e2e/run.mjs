@@ -164,6 +164,37 @@ function startFixtureServer() {
         );
         return;
       }
+      // Pages for the failure paths: a late button, a covered button, an
+      // iframe, a redirect loop and a server error.
+      const html = (body) => {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fixture</title></head><body>${body}</body></html>`);
+      };
+      if (req.method === 'GET' && req.url === '/late') {
+        html("<h1>Late</h1><script>setTimeout(()=>{const b=document.createElement('button');b.id='late';b.textContent='Ready';document.body.append(b)},1500)</script>");
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/covered') {
+        html('<button id="under">Buy</button><div id="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.4)"></div>');
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/frame') {
+        html('<h1>Checkout</h1><iframe id="pay" title="Payment" src="/frame-inner" width="400" height="200"></iframe>');
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/frame-inner') {
+        html('<label for="card">Card number</label><input id="card"><button>Pay</button>');
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/loop') {
+        res.writeHead(302, { location: '/loop' }).end();
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/oops') {
+        res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><title>Error</title><h1>Something went wrong</h1>');
+        return;
+      }
       if (req.method === 'GET' && req.url === '/a11y') {
         // Known violations: an image without alt text, an unlabeled input
         // and a button with no accessible name.
@@ -376,7 +407,7 @@ async function phaseHandshake(client, pkg) {
   const withSchema = tools.filter((tool) => tool.outputSchema?.type === 'object').map((tool) => tool.name).sort();
   check(
     'the chained tools declare output schemas',
-    JSON.stringify(withSchema) === JSON.stringify(['audit-accessibility', 'audit-performance', 'audit-tests', 'bisect-failure', 'diagnose-flaky', 'get-failure', 'get-run-status', 'list-tests', 'run-test', 'suggest-fix']),
+    JSON.stringify(withSchema) === JSON.stringify(['audit-accessibility', 'audit-performance', 'audit-tests', 'bisect-failure', 'diagnose-flaky', 'get-failure', 'get-run-status', 'list-tests', 'run-test', 'suggest-fix', 'validate-selector']),
     `got ${JSON.stringify(withSchema)}`,
   );
 }
@@ -515,6 +546,38 @@ async function phaseLivePage(client, origin) {
     60_000,
   );
   check('a failing action names the step', badStep.isError && badStep.text.includes('step 1 (click'), badStep.text.slice(0, 400));
+  check('a failing action reports the page URL and the call log', badStep.text.includes('Page URL at failure:') && badStep.text.includes('Call log:'), badStep.text.slice(0, 600));
+
+  const covered = await callTool(client, 'inspect-page', { url: `${origin}/covered`, actions: [{ type: 'click', locator: '#under' }], actionTimeoutMs: 2_000 }, 60_000);
+  check(
+    'a click on a covered element says what covers it',
+    covered.isError && covered.text.includes('intercepts pointer events') && covered.text.includes('overlay') && covered.text.includes('Timeout 2000ms'),
+    covered.text.slice(0, 800),
+  );
+
+  const slowStep = await callTool(client, 'inspect-page', { url: `${origin}/late`, actions: [{ type: 'click', locator: '#late' }], actionTimeoutMs: 1_000 }, 60_000);
+  check('actionTimeoutMs bounds each step', slowStep.isError && slowStep.result.structuredContent?.error?.kind === 'TIMEOUT' && slowStep.text.includes('Timeout 1000ms'), slowStep.text.slice(0, 400));
+
+  const wholeCall = await callTool(client, 'inspect-page', { url: `${origin}/late`, actions: [{ type: 'wait', locator: '#never' }], actionTimeoutMs: 60_000, timeoutMs: 4_000 }, 60_000);
+  check('running out of timeoutMs is a TIMEOUT, not a crash', wholeCall.result.structuredContent?.error?.kind === 'TIMEOUT' && wholeCall.text.includes('exceeded timeoutMs'), wholeCall.text.slice(0, 400));
+
+  const late = await callTool(client, 'validate-selector', { url: `${origin}/late`, selector: '#late', waitFor: '#late' }, 60_000);
+  check(
+    'validate-selector waits for late elements and returns structured counts',
+    late.result.structuredContent?.valid === true && late.result.structuredContent?.matches === 1 && late.result.structuredContent?.locator === "getByRole('button', { name: 'Ready' })",
+    JSON.stringify(late.result.structuredContent),
+  );
+
+  const framed = await callTool(client, 'inspect-page', { url: `${origin}/frame`, actions: [{ type: 'fill', locator: "frameLocator('#pay').getByLabel('Card number')", value: '4242' }], view: 'locators' }, 60_000);
+  check('actions reach into an iframe with frameLocator', !framed.isError && framed.text.includes('step 1 (fill frameLocator'), framed.text.slice(0, 400));
+  const frameButton = await callTool(client, 'validate-selector', { url: `${origin}/frame`, selector: "locator('#pay').contentFrame().getByRole('button', { name: 'Pay' })" }, 60_000);
+  check('validate-selector resolves locators inside an iframe', frameButton.result.structuredContent?.matches === 1, frameButton.text.slice(0, 400));
+
+  const loop = await callTool(client, 'inspect-page', { url: `${origin}/loop` }, 60_000);
+  check('a redirect loop is a navigation failure, not a stopped server', loop.result.structuredContent?.error?.kind === 'NAVIGATION_FAILED' && loop.text.includes('redirects in a loop'), loop.text.slice(0, 400));
+
+  const oops = await callTool(client, 'inspect-page', { url: `${origin}/oops`, view: 'locators' }, 60_000);
+  check('an error status is reported', oops.text.includes('HTTP 500') && oops.result.structuredContent?.httpStatus === 500, oops.text.slice(0, 400));
 
   const broken = await callTool(client, 'validate-selector', { url: origin, selector: 'div >' }, 90_000);
   contains('validate-selector: CSS parse error reported', broken.text, '## ❌ INVALID');
@@ -534,7 +597,15 @@ async function phaseLivePage(client, origin) {
   );
   await flipFixture(); // restore the blue starting state for the test runs
 
-  const dead = await callTool(client, 'inspect-page', { url: 'http://127.0.0.1:9/' }, 60_000);
+  // A port nothing listens on (browsers refuse well-known ports such as 9 outright).
+  const closedPort = await new Promise((done) => {
+    const probe = createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => done(port));
+    });
+  });
+  const dead = await callTool(client, 'inspect-page', { url: `http://127.0.0.1:${closedPort}/` }, 60_000);
   check(
     'dead server detected (SERVER_NOT_RUNNING)',
     dead.isError && dead.text.includes('SERVER_NOT_RUNNING'),

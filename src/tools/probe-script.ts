@@ -38,13 +38,28 @@ function send(payload) {
 function classifyError(message) {
   const m = String(message);
   if (/Unknown device preset/.test(m)) {
-    return { kind: 'INVALID_PATH', hint: 'Use a name from Playwright\'s device list, e.g. "iPhone 15", "Pixel 7", "iPad Pro 11" or "Desktop Chrome".' };
+    return { kind: 'INVALID_INPUT', hint: 'Use a name from Playwright\'s device list, e.g. "iPhone 15", "Pixel 7", "iPad Pro 11" or "Desktop Chrome".' };
   }
   if (/distribution '([^']+)' is not found|Chromium distribution/i.test(m)) {
     return { kind: 'NO_PLAYWRIGHT', hint: 'That browser channel is not installed on this machine. Install it with: npx playwright install chrome (or msedge), or leave channel unset.' };
   }
   if (/Executable doesn't exist|Please run the following command to install/i.test(m)) {
     return { kind: 'NO_PLAYWRIGHT', hint: 'Playwright browsers are not installed for this project. Run: npx playwright install chromium (or firefox / webkit for those engines)' };
+  }
+  if (/ERR_TOO_MANY_REDIRECTS/.test(m)) {
+    return { kind: 'NAVIGATION_FAILED', hint: 'The page redirects in a loop. This is often a login redirect: pass storageState or log in with actions, or check the URL.' };
+  }
+  if (/ERR_UNSAFE_PORT/.test(m)) {
+    return { kind: 'NAVIGATION_FAILED', hint: 'Browsers refuse to open this port. Serve the app on another port, such as 3000 or 8080.' };
+  }
+  if (/ERR_CERT_|SSL_ERROR|SEC_ERROR/.test(m)) {
+    return { kind: 'NAVIGATION_FAILED', hint: 'The site\'s TLS certificate was rejected. Use http:// locally, or a certificate the browser trusts.' };
+  }
+  if (/^Action step/.test(m) && /intercepts pointer events/.test(m)) {
+    return { kind: 'TIMEOUT', hint: 'Another element covers the target (see the call log): close the overlay, dialog or cookie banner with an earlier action, or wait for it to go.' };
+  }
+  if (/^Action step/.test(m) && /Timeout \d+ms exceeded/.test(m)) {
+    return { kind: 'TIMEOUT', hint: 'The step waited for its element to appear, be visible, enabled and uncovered. Check the locator with validate-selector using the earlier steps as actions. An element inside an iframe needs frameLocator(\'#frame\') first. If the element is only slow, raise actionTimeoutMs (and timeoutMs).' };
   }
   if (/ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_NAME_NOT_RESOLVED|ERR_EMPTY_RESPONSE|getaddrinfo|net::ERR_/i.test(m)) {
     return { kind: 'SERVER_NOT_RUNNING', hint: 'The URL is not reachable. Start your dev server (e.g. npm run dev / npm start) and retry.' };
@@ -56,7 +71,7 @@ function classifyError(message) {
     return { kind: 'BROWSER_CRASH', hint: 'The browser crashed during inspection. Retry; if it persists run: npx playwright install --force' };
   }
   if (/Unknown selector|error evaluating selector|Unexpected token|is not a valid selector|Unknown engine/i.test(m)) {
-    return { kind: 'INVALID_PATH', hint: 'The selector could not be evaluated.' };
+    return { kind: 'INVALID_INPUT', hint: 'The selector could not be evaluated.' };
   }
   return { kind: 'UNKNOWN', hint: undefined };
 }
@@ -148,7 +163,30 @@ function reviveArg(arg) {
   return arg;
 }
 
-const CHAIN_METHODS = new Set(['getByRole', 'getByText', 'getByLabel', 'getByPlaceholder', 'getByAltText', 'getByTitle', 'getByTestId', 'locator', 'first', 'last', 'nth', 'filter']);
+const CHAIN_METHODS = new Set(['getByRole', 'getByText', 'getByLabel', 'getByPlaceholder', 'getByAltText', 'getByTitle', 'getByTestId', 'locator', 'first', 'last', 'nth', 'filter', 'frameLocator', 'contentFrame']);
+const FRAME_STEPS = new Set(['frameLocator', 'contentFrame']);
+
+// The part of a chain up to its last iframe step, and the part inside that frame.
+function splitFrameChain(chain) {
+  let cut = 0;
+  chain.forEach((call, i) => { if (FRAME_STEPS.has(call.method)) cut = i + 1; });
+  return { frame: chain.slice(0, cut), inner: chain.slice(cut) };
+}
+
+// Install the in-page helpers in every frame, so elements inside iframes can be described.
+async function installHelpersEverywhere(page) {
+  await page.evaluate(installHelpers);
+  for (const frame of page.frames()) {
+    if (frame !== page.mainFrame()) await frame.evaluate(installHelpers).catch(() => undefined);
+  }
+}
+
+// Playwright's call log, the lines after "Call log:", trimmed to the last few.
+function callLogOf(message) {
+  const at = message.indexOf('Call log:');
+  if (at < 0) return '';
+  return message.slice(at + 9).split('\n').map((l) => l.trimEnd()).filter((l) => l.trim() !== '').slice(-8).join('\n');
+}
 
 function resolveChain(page, chain) {
   let target = page;
@@ -435,8 +473,13 @@ async function runActions(page, actions, timeout) {
       done.push(label);
     } catch (err) {
       const message = err && err.message ? err.message : String(err);
-      const wrapped = new Error('Action ' + label + ' failed: ' + message.split('\n')[0]);
+      const callLog = callLogOf(message);
+      let where = '';
+      try { where = page.url(); } catch (urlErr) { /* page gone */ }
+      const wrapped = new Error('Action ' + label + ' failed: ' + message.split('\n')[0] + (/intercepts pointer events/.test(callLog) ? ' (another element intercepts pointer events)' : ''));
       wrapped.actionsDone = done;
+      wrapped.callLog = callLog;
+      wrapped.pageUrl = where;
       throw wrapped;
     }
   }
@@ -618,6 +661,7 @@ function summariseRequests(requests, timings, pageUrl) {
   let browser = null;
   let openContext = null;
   let actionsDone = [];
+  let httpStatus;
   // A recorded HAR is written when its context closes, so close the
   // context before the browser.
   const closeBrowser = async () => {
@@ -734,7 +778,8 @@ function summariseRequests(requests, timings, pageUrl) {
       await context.route('**/*', (route) => route.abort());
       await page.setContent(require('node:fs').readFileSync(cfg.snapshotHtmlPath, 'utf8'), { waitUntil: 'domcontentloaded', timeout: cfg.gotoTimeout || 15000 });
     } else {
-      await page.goto(cfg.url, { waitUntil: cfg.waitUntil || 'domcontentloaded', timeout: cfg.gotoTimeout || 15000 });
+      const response = await page.goto(cfg.url, { waitUntil: cfg.waitUntil || 'domcontentloaded', timeout: cfg.gotoTimeout || 15000 });
+      if (response) httpStatus = response.status();
       if (cfg.waitFor) await page.locator(cfg.waitFor).first().waitFor({ state: 'visible', timeout: cfg.waitTimeout || 5000 });
       // perf: let late images, fonts and shifts land before anything else.
       if (cfg.mode === 'perf' && cfg.settleMs) await page.waitForTimeout(cfg.settleMs);
@@ -765,6 +810,7 @@ function summariseRequests(requests, timings, pageUrl) {
           elements: [],
           actionsDone: actionsDone,
           routeHits: routeHits,
+          httpStatus: httpStatus,
           durationMs: Date.now() - cfg.startedAt,
         },
       });
@@ -772,7 +818,7 @@ function summariseRequests(requests, timings, pageUrl) {
       process.exit(0);
     }
 
-    await page.evaluate(installHelpers);
+    await installHelpersEverywhere(page);
     let data;
 
     if (cfg.mode === 'validate') {
@@ -787,13 +833,21 @@ function summariseRequests(requests, timings, pageUrl) {
         });
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
-        if (classifyError(message).kind === 'INVALID_PATH' || /Unsupported locator/.test(message)) {
+        if (classifyError(message).kind === 'INVALID_INPUT' || /Unsupported locator/.test(message)) {
           data.parseError = message.split('\n')[0];
         } else {
           throw err;
         }
       }
-      if (!data.parseError) await attachLocators(page, data.elements, 5, 3);
+      if (!data.parseError) {
+        // Inside an iframe, suggest locators relative to the frame and keep the frame step in front.
+        const parts = splitFrameChain(cfg.selectorChain);
+        const scope = parts.frame.length ? resolveChain(page, parts.frame) : page;
+        await attachLocators(scope, data.elements, 5, 3);
+        if (parts.frame.length) {
+          for (const el of data.elements) if (el.locators) el.locators = el.locators.map((chain) => parts.frame.concat(chain));
+        }
+      }
     } else if (cfg.mode === 'a11y') {
       // axe-core is evaluated in the page itself (not a script tag), so a
       // Content-Security-Policy cannot block it.
@@ -954,6 +1008,7 @@ function summariseRequests(requests, timings, pageUrl) {
     data.actionsDone = actionsDone;
     data.routeHits = routeHits;
     data.finalUrl = data.finalUrl || page.url();
+    data.httpStatus = httpStatus;
     data.durationMs = Date.now() - cfg.startedAt;
     send({ ok: true, data: data });
     await closeBrowser();
@@ -961,7 +1016,8 @@ function summariseRequests(requests, timings, pageUrl) {
   } catch (err) {
     const message = err && err.message ? err.message : String(err);
     const classified = classifyError(message);
-    send({ ok: false, kind: classified.kind, error: message, hint: classified.hint, actionsDone: err && err.actionsDone });
+    const extra = (err && err.pageUrl ? '\nPage URL at failure: ' + err.pageUrl : '') + (err && err.callLog ? '\nCall log:\n' + err.callLog : '');
+    send({ ok: false, kind: classified.kind, error: message + extra, hint: classified.hint, actionsDone: err && err.actionsDone });
     try { if (browser) await closeBrowser(); } catch (closeErr) { /* ignore */ }
     process.exit(1);
   }

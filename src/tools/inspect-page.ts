@@ -121,7 +121,7 @@ function renderElement(element: ElementInfo, position: number): string {
 export const inspectPageTool = {
   name: 'inspect-page',
   description:
-    "Open a URL headlessly and return its elements with Playwright locators proven unique on the page (role + name first), CSS selectors, visibility, text and console messages. storageState/headers open it signed in; actions click/fill first to reach a state. view 'locators' is the compact map; view 'aria' returns the accessibility snapshot plus a ready toMatchAriaSnapshot assertion.",
+    "Open a URL in a fresh headless browser and return its elements with Playwright locators proven unique on the page (role + name first), CSS selectors, visibility, text and console messages. Each call starts clean (no cookies kept): put every step to reach a state, login included, in actions, or open it signed in with storageState/headers. view 'locators' is the compact map; view 'aria' returns the accessibility snapshot plus a ready toMatchAriaSnapshot assertion.",
   inputSchema: inspectPageSchema,
   handler: async (args: InspectPageInput, ctx: ToolContext): Promise<ToolResponse> =>
     guard('inspect-page', async () => {
@@ -164,12 +164,13 @@ export const inspectPageTool = {
       const data = outcome.data!;
       if (data.parseError) {
         return toolError(
-          'INVALID_PATH',
+          'INVALID_INPUT',
           `Invalid selector "${args.selector}": ${data.parseError}`,
           'inspect-page validates CSS selectors only (what document.querySelectorAll accepts).',
         );
       }
 
+      const pageData = { url: data.finalUrl ?? url, matches: data.matchCount, ...(data.httpStatus !== undefined ? { httpStatus: data.httpStatus } : {}) };
       const lines: string[] = [];
       const title = data.title ? `"${data.title}"` : '(no title)';
       lines.push(`## 🔎 ${title}`, '');
@@ -183,13 +184,16 @@ export const inspectPageTool = {
       if (mocks.length > 0) lines.push('**Network mocks:**', ...mocks);
       if (data.actionsDone?.length) lines.push(`**Steps run:** ${data.actionsDone.join('; ')}`);
       lines.push('');
+      if (data.httpStatus !== undefined && data.httpStatus >= 400) {
+        lines.push(`> ⚠️ The page answered **HTTP ${data.httpStatus}**, so this is its error page.`, '');
+      }
       const login = loginHint(data.finalUrl, state);
       if (login) lines.push(`> 🔒 ${login}`, '');
 
       if (view === 'aria') {
         if (data.ariaSnapshot === undefined) {
           lines.push(`_\`${args.selector}\` matched no element._`);
-          return toolText(lines.join('\n'));
+          return toolText(lines.join('\n'), pageData);
         }
         lines.push(
           `### Accessibility snapshot${args.selector ? ` of \`${args.selector}\`${data.matchCount > 1 ? ` (first of ${data.matchCount})` : ''}` : ''}${data.ariaTruncated ? ' (truncated)' : ''}`,
@@ -210,7 +214,7 @@ export const inspectPageTool = {
         } else {
           lines.push('> The snapshot was cut. Pass a narrower `selector` to get a complete one with an assertion.');
         }
-        return toolText(lines.join('\n'));
+        return toolText(lines.join('\n'), pageData);
       }
 
       const heading = args.selector
@@ -260,6 +264,6 @@ export const inspectPageTool = {
           `> \`${args.selector}\` matches ${data.matchCount} elements. If you need exactly one, use the first unique selector above.`,
         );
       }
-      return toolText(lines.join('\n'));
+      return toolText(lines.join('\n'), pageData);
     }),
 };

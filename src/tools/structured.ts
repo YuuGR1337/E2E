@@ -122,6 +122,11 @@ export const toolOutputSchema = z.object({
   steps: z
     .array(z.object({ commit: z.string(), verdict: z.enum(['good', 'bad', 'skip']), note: z.string().optional() }))
     .optional(),
+  // validate-selector, inspect-page
+  valid: z.boolean().optional().describe('validate-selector: the selector parsed and ran'),
+  matches: z.number().int().optional().describe('elements matched; actions need exactly 1'),
+  locator: z.string().optional().describe('a verified unique locator for the first match'),
+  httpStatus: z.number().int().optional().describe("the page's HTTP status"),
 });
 
 export type StructuredResult = z.infer<typeof toolOutputSchema>;
@@ -171,6 +176,7 @@ const TOOL_FIELDS: Readonly<Record<string, ReadonlyArray<keyof StructuredResult>
   'audit-performance': ['url', 'metrics'],
   'audit-tests': ['findings', 'total', 'truncated', 'applied', 'verified'],
   'bisect-failure': ['status', 'firstBad', 'steps'],
+  'validate-selector': ['url', 'valid', 'matches', 'locator', 'httpStatus'],
 };
 
 /**

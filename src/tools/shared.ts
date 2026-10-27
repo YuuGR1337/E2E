@@ -360,7 +360,18 @@ export const routeMockSchema = z.object({
 /** Inputs shared by every tool that opens a page. */
 export const pageStateShape = {
   ...sessionShape,
-  actions: z.array(pageActionSchema).max(20).optional().describe('Steps run after load to reach a state (modal, step 3)'),
+  actions: z
+    .array(pageActionSchema)
+    .max(20)
+    .optional()
+    .describe("Steps run in order after load to reach a state (modal, step 3). One call = one fresh browser, so include the login steps; end with a 'wait' on what the state shows"),
+  actionTimeoutMs: z
+    .number()
+    .int()
+    .min(1_000)
+    .max(120_000)
+    .optional()
+    .describe('How long each action waits for its element (default 10000); keep timeoutMs above the total'),
   routes: z
     .array(routeMockSchema)
     .max(20)
@@ -391,6 +402,7 @@ export const pageStateShape = {
 };
 
 export interface PageStateInput {
+  actionTimeoutMs?: number;
   storageState?: string;
   headers?: Record<string, string>;
   actions?: Array<z.infer<typeof pageActionSchema>>;
@@ -419,6 +431,8 @@ export interface ResolvedRouteMock {
 }
 
 export interface ResolvedPageState {
+  /** Per-action wait in ms (the probe's default is 10000). */
+  actionTimeout?: number;
   storageState?: string;
   headers?: Record<string, string>;
   actions?: Array<{ type: string; label: string; locator?: LocatorCall[]; value?: string; url?: string; ms?: number }>;
@@ -474,7 +488,7 @@ async function resolveHar(
 function assertHeaders(headers: Record<string, string>, what: string): void {
   for (const [name, value] of Object.entries(headers)) {
     if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value)) {
-      throw new PlaywrightMcpError(`Invalid ${what} "${name}"`, 'INVALID_PATH', {
+      throw new PlaywrightMcpError(`Invalid ${what} "${name}"`, 'INVALID_INPUT', {
         hint: 'Header names must be tokens and values must be single-line.',
       });
     }
@@ -487,13 +501,13 @@ export function resolveRouteMocks(routes: NonNullable<PageStateInput['routes']>)
     const step = `routes[${i}] (${route.url})`;
     const method = route.method?.trim().toUpperCase();
     if (method !== undefined && !/^[A-Z]+$/.test(method)) {
-      throw new PlaywrightMcpError(`${step}: "${route.method}" is not an HTTP method`, 'INVALID_PATH');
+      throw new PlaywrightMcpError(`${step}: "${route.method}" is not an HTTP method`, 'INVALID_INPUT');
     }
     if (route.json !== undefined && route.body !== undefined) {
-      throw new PlaywrightMcpError(`${step}: pass json or body, not both`, 'INVALID_PATH');
+      throw new PlaywrightMcpError(`${step}: pass json or body, not both`, 'INVALID_INPUT');
     }
     if (route.abort && (route.json !== undefined || route.body !== undefined || route.status !== undefined)) {
-      throw new PlaywrightMcpError(`${step}: abort cannot be combined with a response`, 'INVALID_PATH');
+      throw new PlaywrightMcpError(`${step}: abort cannot be combined with a response`, 'INVALID_INPUT');
     }
     if (route.headers) assertHeaders(route.headers, `${step} header`);
     let body = route.body;
@@ -501,7 +515,7 @@ export function resolveRouteMocks(routes: NonNullable<PageStateInput['routes']>)
     if (route.json !== undefined) {
       body = JSON.stringify(route.json);
       if (body === undefined || body.length > MAX_MOCK_BODY) {
-        throw new PlaywrightMcpError(`${step}: json must be serialisable and under ${MAX_MOCK_BODY} characters`, 'INVALID_PATH');
+        throw new PlaywrightMcpError(`${step}: json must be serialisable and under ${MAX_MOCK_BODY} characters`, 'INVALID_INPUT');
       }
       contentType ??= 'application/json';
     }
@@ -572,12 +586,12 @@ export async function resolvePageState(
   if (input.har) out.har = await resolveHar(input.har, root, ctx);
   if (input.browser && input.browser !== 'chromium') {
     if (serverlessChromiumEnabled()) {
-      throw new PlaywrightMcpError(`${input.browser} is not available on the hosted endpoint`, 'INVALID_PATH', {
+      throw new PlaywrightMcpError(`${input.browser} is not available on the hosted endpoint`, 'INVALID_INPUT', {
         hint: "The hosted endpoint bundles Chromium only. Use 'chromium', or run the server locally for Firefox and WebKit.",
       });
     }
     if (input.browser === 'webkit' && blockPrivateUrls()) {
-      throw new PlaywrightMcpError('webkit is not available while private addresses are blocked', 'INVALID_PATH', {
+      throw new PlaywrightMcpError('webkit is not available while private addresses are blocked', 'INVALID_INPUT', {
         hint: "WebKit cannot route every connection through the address guard. Use 'chromium' or 'firefox'.",
       });
     }
@@ -586,7 +600,7 @@ export async function resolvePageState(
   if (input.device) {
     // Checked against the project's own Playwright device list in the browser child.
     if (!/^[\w .()+-]+$/.test(input.device)) {
-      throw new PlaywrightMcpError(`device "${input.device}" is not a Playwright device name`, 'INVALID_PATH', {
+      throw new PlaywrightMcpError(`device "${input.device}" is not a Playwright device name`, 'INVALID_INPUT', {
         hint: "Use a name from Playwright's device list, e.g. 'iPhone 15' or 'Pixel 7'.",
       });
     }
@@ -594,30 +608,31 @@ export async function resolvePageState(
   }
   if (input.channel) {
     if ((input.browser ?? 'chromium') !== 'chromium') {
-      throw new PlaywrightMcpError(`channel ${input.channel} needs the chromium engine`, 'INVALID_PATH', {
+      throw new PlaywrightMcpError(`channel ${input.channel} needs the chromium engine`, 'INVALID_INPUT', {
         hint: 'Leave browser unset (or chromium) when you pick a channel.',
       });
     }
     if (serverlessChromiumEnabled()) {
-      throw new PlaywrightMcpError(`channel ${input.channel} is not available on the hosted endpoint`, 'INVALID_PATH', {
+      throw new PlaywrightMcpError(`channel ${input.channel} is not available on the hosted endpoint`, 'INVALID_INPUT', {
         hint: 'The hosted endpoint bundles one Chromium build. Run the server locally to test in Chrome or Edge.',
       });
     }
     out.channel = input.channel;
   }
   if (input.routes && input.routes.length > 0) out.routes = resolveRouteMocks(input.routes);
+  if (input.actionTimeoutMs !== undefined) out.actionTimeout = input.actionTimeoutMs;
   if (input.actions && input.actions.length > 0) {
     out.actions = [];
     let current = entryUrl;
     for (const [i, action] of input.actions.entries()) {
       const step = `actions[${i}] (${action.type})`;
       if (action.type === 'goto') {
-        if (!action.url) throw new PlaywrightMcpError(`${step} needs a url`, 'INVALID_PATH');
+        if (!action.url) throw new PlaywrightMcpError(`${step} needs a url`, 'INVALID_INPUT');
         let next: string;
         try {
           next = new URL(action.url, current).toString();
         } catch {
-          throw new PlaywrightMcpError(`${step}: "${action.url}" is not a valid URL`, 'INVALID_PATH');
+          throw new PlaywrightMcpError(`${step}: "${action.url}" is not a valid URL`, 'INVALID_INPUT');
         }
         assertHttpUrl(next);
         await assertUrlAllowed(next);
@@ -626,10 +641,10 @@ export async function resolvePageState(
         continue;
       }
       if (NEEDS_LOCATOR.has(action.type) && !action.locator) {
-        throw new PlaywrightMcpError(`${step} needs a locator`, 'INVALID_PATH');
+        throw new PlaywrightMcpError(`${step} needs a locator`, 'INVALID_INPUT');
       }
       if ((action.type === 'press' || action.type === 'select') && action.value === undefined) {
-        throw new PlaywrightMcpError(`${step} needs a value`, 'INVALID_PATH');
+        throw new PlaywrightMcpError(`${step} needs a value`, 'INVALID_INPUT');
       }
       const locator = action.locator ? parseLocator(action.locator) : undefined;
       out.actions.push({
@@ -755,6 +770,8 @@ export interface BrowserScriptData {
   ariaTruncated?: boolean;
   /** Requests each network mock in `routes` handled, by index. */
   routeHits?: number[];
+  /** HTTP status of the page's main document, when it was fetched over the network. */
+  httpStatus?: number;
 }
 
 export interface PerformanceResource {
@@ -895,6 +912,26 @@ export async function runBrowserScript(
       return { ok: false, kind: 'CLIENT_DISCONNECT', error: 'Inspection aborted (client disconnected).' };
     }
 
+    // Checked before the child's output: killing it closes the browser, and the
+    // "browser has been closed" error it prints then is not a crash.
+    if (outcome.timedOut) {
+      const done = extractJsonFromText(outcome.stdout);
+      let steps: string[] | undefined;
+      try {
+        steps = done ? (JSON.parse(done) as { actionsDone?: string[] }).actionsDone : undefined;
+      } catch {
+        /* no usable output */
+      }
+      return {
+        ok: false,
+        kind: 'TIMEOUT',
+        error: `The whole call exceeded timeoutMs (${options.timeoutMs ?? 45_000}ms) and was stopped.`,
+        hint: 'Raise timeoutMs. It covers launch, navigation and every action, so keep it above the sum of the waits (each action waits up to actionTimeoutMs, default 10000).',
+        ...(steps?.length ? { actionsDone: steps } : {}),
+        stderrTail: tailText(outcome.stderr),
+      };
+    }
+
     const json = extractJsonFromText(outcome.stdout);
     if (json !== null) {
       try {
@@ -915,15 +952,6 @@ export async function runBrowserScript(
       }
     }
 
-    if (outcome.timedOut) {
-      return {
-        ok: false,
-        kind: 'TIMEOUT',
-        error: `Page inspection exceeded ${options.timeoutMs ?? 45_000}ms and was killed.`,
-        hint: 'The page may be blocking on network requests. Raise timeoutMs or use waitUntil: "domcontentloaded".',
-        stderrTail: tailText(outcome.stderr),
-      };
-    }
     return {
       ok: false,
       kind: 'UNKNOWN',
@@ -949,12 +977,12 @@ export function assertHttpUrl(url: string): string {
   try {
     parsed = new URL(trimmed);
   } catch {
-    throw new PlaywrightMcpError(`"${url}" is not a valid URL`, 'INVALID_PATH', {
+    throw new PlaywrightMcpError(`"${url}" is not a valid URL`, 'INVALID_INPUT', {
       hint: 'Use a full URL, e.g. http://localhost:3000/login',
     });
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new PlaywrightMcpError(`Unsupported URL scheme "${parsed.protocol}"`, 'INVALID_PATH', {
+    throw new PlaywrightMcpError(`Unsupported URL scheme "${parsed.protocol}"`, 'INVALID_INPUT', {
       hint: 'Only http:// and https:// URLs are supported.',
     });
   }

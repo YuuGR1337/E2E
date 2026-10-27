@@ -483,7 +483,7 @@ export const suggestFixTool = {
             : picked;
         const listing = strict.matches.map((m, i) => `${i + 1}. \`${m.locator}\` · \`${clipLines(m.html, 1, 120)}\``);
         if (args.candidate !== undefined && !chosen) {
-          throw new PlaywrightMcpError(`candidate ${args.candidate} is out of range: Playwright listed ${strict.matches.length} match(es)`, 'INVALID_PATH', {
+          throw new PlaywrightMcpError(`candidate ${args.candidate} is out of range: Playwright listed ${strict.matches.length} match(es)`, 'INVALID_INPUT', {
             hint: 'Call suggest-fix without candidate to see the list.',
           });
         }

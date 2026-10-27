@@ -36,6 +36,29 @@ import { bisectFailureTool } from './tools/bisect-failure.js';
 import { registerPrompts } from './prompts.js';
 import { outputSchemaFor } from './tools/structured.js';
 
+/**
+ * Accept unknown argument names instead of dropping them silently, so the
+ * result can say which ones were ignored: a planner that writes `waitfor`
+ * for `waitFor` otherwise never learns its option did nothing.
+ */
+function looseInput(schema: StandardSchemaWithJSON): { schema: StandardSchemaWithJSON; known: Set<string> | undefined } {
+  const object = schema as unknown as { shape?: Record<string, unknown>; loose?: () => StandardSchemaWithJSON };
+  if (!object.shape || typeof object.loose !== 'function') return { schema, known: undefined };
+  return { schema: object.loose(), known: new Set(Object.keys(object.shape)) };
+}
+
+/** Prepend a note naming arguments the tool does not have, with the closest real name. */
+function noteIgnoredArguments(result: ToolResponse, ignored: string[], known: Set<string>): ToolResponse {
+  const names = ignored.map((name) => {
+    const match = [...known].find((k) => k.toLowerCase() === name.toLowerCase().replace(/[-_]/g, ''));
+    return match ? `\`${name}\` (did you mean \`${match}\`?)` : `\`${name}\``;
+  });
+  const note = `> ⚠️ Ignored unknown argument${ignored.length === 1 ? '' : 's'}: ${names.join(', ')}.\n\n`;
+  const [first, ...rest] = result.content;
+  const content = first && first.type === 'text' ? [{ ...first, text: note + first.text }, ...rest] : [{ type: 'text' as const, text: note.trim() }, ...result.content];
+  return { ...result, content };
+}
+
 const require = createRequire(import.meta.url);
 
 function readVersion(): string {
@@ -357,12 +380,13 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   }
   const enabled = selection ? TOOLS.filter((tool) => selection.includes(tool.name)) : TOOLS;
   for (const tool of enabled) {
+    const input = looseInput(tool.inputSchema);
     server.registerTool(
       tool.name,
       {
         title: tool.title,
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        inputSchema: input.schema,
         // Results always carry structuredContent; the schema that describes
         // it costs context on every request, so PW_MCP_OUTPUT_SCHEMAS=0 drops it.
         ...(process.env.PW_MCP_OUTPUT_SCHEMAS !== '0' && outputSchemaFor(tool.name) ? { outputSchema: outputSchemaFor(tool.name) } : {}),
@@ -396,7 +420,11 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
           restricted: options.restricted === true,
         };
         try {
-          return await tool.handler(args as never, ctx);
+          const given = (args ?? {}) as Record<string, unknown>;
+          const ignored = input.known ? Object.keys(given).filter((key) => !input.known!.has(key)) : [];
+          if (ignored.length === 0) return await tool.handler(args as never, ctx);
+          const known = Object.fromEntries(Object.entries(given).filter(([key]) => input.known!.has(key)));
+          return noteIgnoredArguments(await tool.handler(known as never, ctx), ignored, input.known!);
         } catch (err) {
           // Backstop: tools already convert their own errors via guard().
           const error = toPlaywrightMcpError(err);

@@ -40,6 +40,8 @@ export const LOCATOR_METHODS = [
   'last',
   'nth',
   'filter',
+  'frameLocator',
+  'contentFrame',
 ] as const;
 
 export type LocatorMethod = (typeof LOCATOR_METHODS)[number];
@@ -87,7 +89,7 @@ class Cursor {
   }
 
   fail(message: string): never {
-    throw new PlaywrightMcpError(`Cannot parse locator: ${message} at position ${this.pos + 1}`, 'INVALID_PATH', {
+    throw new PlaywrightMcpError(`Cannot parse locator: ${message} at position ${this.pos + 1}`, 'INVALID_INPUT', {
       hint: 'Use a Playwright locator such as getByRole(\'button\', { name: \'Save\' }), getByTestId(\'cart\'), locator(\'#cta\').first(), or a plain selector string.',
     });
   }
@@ -189,7 +191,7 @@ function parseValue(c: Cursor, depth: number): LocatorArg {
 /** True when the input looks like a call chain rather than a selector string. */
 export function isLocatorExpression(input: string): boolean {
   const trimmed = input.trim().replace(/^await\s+/, '');
-  return /^(page\s*\.\s*)?(getBy(Role|Text|Label|Placeholder|AltText|Title|TestId)|locator)\s*\(/.test(trimmed);
+  return /^(page\s*\.\s*)?(getBy(Role|Text|Label|Placeholder|AltText|Title|TestId)|locator|frameLocator)\s*\(/.test(trimmed);
 }
 
 /**
@@ -199,10 +201,10 @@ export function isLocatorExpression(input: string): boolean {
 export function parseLocator(input: string): LocatorCall[] {
   const raw = input.trim().replace(/;$/, '').trim();
   if (raw === '') {
-    throw new PlaywrightMcpError('Locator is empty', 'INVALID_PATH', { hint: 'Pass a selector or a Playwright locator.' });
+    throw new PlaywrightMcpError('Locator is empty', 'INVALID_INPUT', { hint: 'Pass a selector or a Playwright locator.' });
   }
   if (raw.length > MAX_EXPRESSION_CHARS) {
-    throw new PlaywrightMcpError('Locator is too long', 'INVALID_PATH', {
+    throw new PlaywrightMcpError('Locator is too long', 'INVALID_INPUT', {
       hint: `Keep locators under ${MAX_EXPRESSION_CHARS} characters.`,
     });
   }
@@ -236,9 +238,20 @@ export function parseLocator(input: string): LocatorCall[] {
 }
 
 function validateCalls(calls: LocatorCall[]): void {
-  for (const call of calls) {
+  const last = calls[calls.length - 1];
+  if (last && FRAME_STEPS.has(last.method)) {
+    throw bad(`${last.method}() switches into an iframe; follow it with the element inside, e.g. ${last.method}(${last.method === 'frameLocator' ? "'#checkout'" : ''}).getByRole('button')`);
+  }
+  for (const [i, call] of calls.entries()) {
     const [a0] = call.args;
     switch (call.method) {
+      case 'frameLocator':
+        if (typeof a0 !== 'string' || call.args.length !== 1) throw bad('frameLocator() takes an iframe selector string');
+        break;
+      case 'contentFrame':
+        if (call.args.length !== 0) throw bad('contentFrame() takes no arguments');
+        if (i === 0) throw bad("contentFrame() follows the iframe's locator, e.g. locator('#checkout').contentFrame()");
+        break;
       case 'first':
       case 'last':
         if (call.args.length !== 0) throw bad(`${call.method}() takes no arguments`);
@@ -263,9 +276,12 @@ function validateCalls(calls: LocatorCall[]): void {
   }
 }
 
+/** Steps that move the chain into an iframe's document. */
+export const FRAME_STEPS = new Set<string>(['frameLocator', 'contentFrame']);
+
 function bad(message: string): PlaywrightMcpError {
-  return new PlaywrightMcpError(`Cannot parse locator: ${message}`, 'INVALID_PATH', {
-    hint: 'Supported: getByRole/Text/Label/Placeholder/AltText/Title/TestId, locator, first, last, nth, filter({ hasText }).',
+  return new PlaywrightMcpError(`Cannot parse locator: ${message}`, 'INVALID_INPUT', {
+    hint: "Supported: getByRole/Text/Label/Placeholder/AltText/Title/TestId, locator, first, last, nth, filter({ hasText }), and frameLocator('#frame') or locator('#frame').contentFrame() for iframes.",
   });
 }
 
