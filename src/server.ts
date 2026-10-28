@@ -1,5 +1,5 @@
 /**
- * MCP server setup: creates the McpServer instance, registers the sixteen
+ * MCP server setup: creates the McpServer instance, registers the nineteen
  * tools (with spec tool annotations) and the workflow prompts, and wires
  * each invocation to a ToolContext (per-tool logger, abort signal, progress
  * reporter, shared store, default project root).
@@ -33,6 +33,9 @@ import { getRunStatusTool } from './tools/get-run-status.js';
 import { loadReportTool } from './tools/load-report.js';
 import { auditTestsTool } from './tools/audit-tests.js';
 import { bisectFailureTool } from './tools/bisect-failure.js';
+import { saveLoginTool } from './tools/save-login.js';
+import { checkTestChangeTool } from './tools/check-test-change.js';
+import { quarantineTool } from './tools/quarantine.js';
 import { registerPrompts } from './prompts.js';
 import { outputSchemaFor } from './tools/structured.js';
 
@@ -279,6 +282,41 @@ const TOOLS: ToolSpec[] = [
     },
     handler: bisectFailureTool.handler as ToolSpec['handler'],
   },
+  {
+    ...checkTestChangeTool,
+    title: 'Check a test fix (heal guard)',
+    // Reads spec files and runs read-only git commands.
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    handler: checkTestChangeTool.handler as ToolSpec['handler'],
+  },
+  {
+    ...quarantineTool,
+    title: 'Quarantine flaky tests',
+    // Reads and writes playwright-quarantine.json in the project.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    handler: quarantineTool.handler as ToolSpec['handler'],
+  },
+  {
+    ...saveLoginTool,
+    title: 'Save a login session',
+    // Drives a browser through a live login and writes a session file.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    handler: saveLoginTool.handler as ToolSpec['handler'],
+  },
 ];
 
 export interface CreateServerOptions {
@@ -304,15 +342,15 @@ export const READ_ONLY_TOOLS: readonly string[] = ['list-tests', 'get-failure', 
 
 /**
  * Named tool sets for PW_MCP_TOOLS / --tools. Every tool definition costs
- * context on each request (all sixteen are ~12k tokens), so a client that
+ * context on each request (all nineteen are ~14k tokens), so a client that
  * only fixes failing suites can load the core loop alone.
  */
 export const TOOL_PROFILES: Readonly<Record<string, readonly string[]>> = {
   all: TOOLS.map((tool) => tool.name),
-  core: ['run-test', 'get-run-status', 'get-failure', 'suggest-fix', 'diagnose-flaky', 'list-tests'],
-  triage: ['run-test', 'get-run-status', 'get-failure', 'load-report', 'diagnose-flaky', 'analyze-history', 'audit-tests', 'bisect-failure', 'list-tests'],
-  inspect: ['inspect-page', 'validate-selector', 'compare-visual-state', 'audit-accessibility', 'audit-performance'],
-  author: ['list-tests', 'inspect-page', 'validate-selector', 'generate-e2e-test', 'run-test'],
+  core: ['run-test', 'get-run-status', 'get-failure', 'suggest-fix', 'check-test-change', 'diagnose-flaky', 'list-tests'],
+  triage: ['run-test', 'get-run-status', 'get-failure', 'load-report', 'diagnose-flaky', 'quarantine', 'analyze-history', 'audit-tests', 'bisect-failure', 'check-test-change', 'list-tests'],
+  inspect: ['inspect-page', 'validate-selector', 'compare-visual-state', 'audit-accessibility', 'audit-performance', 'save-login'],
+  author: ['list-tests', 'save-login', 'inspect-page', 'validate-selector', 'generate-e2e-test', 'check-test-change', 'run-test'],
 };
 
 /**

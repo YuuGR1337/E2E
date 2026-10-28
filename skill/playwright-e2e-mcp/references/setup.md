@@ -82,6 +82,8 @@ Set these in the server's `env` block. None of them are secrets except
 | `PW_MCP_BLOCK_PRIVATE_URLS` | off for stdio | `1` makes the URL tools refuse loopback, private-network and cloud-metadata addresses |
 | `PW_MCP_STORAGE_STATE` | none | Default Playwright storageState JSON (inside the project) for the page tools, so signed-in pages open logged in |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Seeds for `diagnose-flaky`'s `order` pass (comma separated), to replay reported orders |
+| `PW_MCP_LOGIN_ENV` | — | Extra variables `save-login` may type through `{{env:NAME}}`, comma separated (default: only `E2E_*`, `TEST_*`, `PW_*`, `PLAYWRIGHT_*`, `LOGIN_*`) |
+| `PW_MCP_PRO_KEY` / `PW_MCP_PRO_URL` | — | Optional paid Pro: CI runs uploaded with `upload` show up in `analyze-history` (`source: both`). Unset = no network calls |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `<project>/.playwright-e2e-mcp/history.jsonl` (this turns off `analyze-history`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` or `silent` |
 | `PW_MCP_HTTP_TOKEN` | none | HTTP bridge only: bearer token that unlocks all tools |
@@ -112,7 +114,7 @@ Exit code 0 means passed, 1 tests failed, 2 the run itself failed. On GitHub
 Actions it also writes to the job summary. As an Action:
 
 ```yaml
-- uses: xsignon-secure/E2E@v0.6.1
+- uses: xsignon-secure/E2E@v0.7.0
   with:
     flaky-runs: 3
     suggest: 2
@@ -120,3 +122,7 @@ Actions it also writes to the job summary. As an Action:
 
 It keeps one PR comment up to date when the run fails (needs
 `pull-requests: write`).
+
+From 0.7.0, `npx -y playwright-e2e-mcp guard --base origin/main` (or the
+Action's `guard: true` input) fails the job when a changed test was made to
+pass by checking less, and `ci` honours `playwright-quarantine.json`.

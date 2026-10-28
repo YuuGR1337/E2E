@@ -26,12 +26,17 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 const fixtureRoot = path.join(here, 'fixture');
 const serverEntry = path.join(repoRoot, 'dist', 'index.js');
+
+// Secrets for the save-login checks: they reach the server only through its
+// environment, never through tool arguments.
+const LOGIN_PASSWORD = 'e2e-correct-horse';
+const LOGIN_TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
 
 const COLORS = { blue: 'rgb(37, 99, 235)', red: 'rgb(220, 38, 38)' };
 const EXPECTED_TOOLS = [
@@ -40,6 +45,7 @@ const EXPECTED_TOOLS = [
   'audit-performance',
   'audit-tests',
   'bisect-failure',
+  'check-test-change',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',
@@ -48,7 +54,9 @@ const EXPECTED_TOOLS = [
   'inspect-page',
   'list-tests',
   'load-report',
+  'quarantine',
   'run-test',
+  'save-login',
   'suggest-fix',
   'validate-selector',
 ];
@@ -123,7 +131,11 @@ function accountHtml() {
 `;
 }
 
-function startFixtureServer() {
+async function startFixtureServer() {
+  const { generateTotp, parseTotpSecret } = await import(pathToFileURL(path.join(repoRoot, 'dist', 'utils', 'totp.js')).href);
+  const totp = parseTotpSecret(LOGIN_TOTP_SECRET);
+  // The previous window's code is accepted too, as real servers do.
+  const totpOk = (code) => code === generateTotp(totp) || code === generateTotp(totp, Date.now() - 30_000);
   return new Promise((resolve, reject) => {
     const state = { flipped: false };
     const server = createServer((req, res) => {
@@ -144,6 +156,39 @@ function startFixtureServer() {
       if (req.method === 'GET' && req.url === '/login') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end('<!doctype html><title>Sign in</title><h1>Sign in</h1><label for="email">Email</label><input id="email"><button>Sign in</button>');
+        return;
+      }
+      // A login with a password and an authenticator code, for save-login.
+      if (req.method === 'GET' && req.url === '/signin') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(
+          '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in</title></head><body><h1>Sign in</h1>' +
+            '<form method="post" action="/signin"><label for="u">Email</label><input id="u" name="email"><label for="p">Password</label><input id="p" name="password" type="password">' +
+            '<label for="otp">One-time code</label><input id="otp" name="otp" inputmode="numeric"><button>Sign in</button></form></body></html>',
+        );
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/signin') {
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', () => {
+          const form = new URLSearchParams(body);
+          const ok = form.get('email') === 'qa@example.com' && form.get('password') === LOGIN_PASSWORD && totpOk(form.get('otp') ?? '');
+          if (!ok) {
+            res.writeHead(302, { location: '/signin?error=1' }).end();
+            return;
+          }
+          res.writeHead(302, { location: '/me', 'set-cookie': 'member=yes; Path=/; HttpOnly; Max-Age=3600' }).end();
+        });
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/me') {
+        if (!/(^|;\s*)member=yes(;|$)/.test(req.headers.cookie ?? '')) {
+          res.writeHead(302, { location: '/signin' }).end();
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Me</title></head><body><h1>Welcome back</h1><button>Sign out</button></body></html>');
         return;
       }
       if (req.method === 'GET' && req.url === '/api/cart') {
@@ -355,7 +400,7 @@ async function callTool(client, name, args, timeoutMs = 150_000, meta) {
 /* ------------------------------------------------------------------ */
 
 function cleanFixture() {
-  const stale = ['test-results', 'playwright-report', 'blob-report', '.pw-mcp', '.playwright-e2e-mcp', '.auth', 'tests/generated', 'tests/.flaky-marker', 'tests/heal.spec.ts', 'tests/slot.spec.ts', 'tests/order.spec.ts', 'tests/.slot-lock'];
+  const stale = ['test-results', 'playwright-report', 'blob-report', '.pw-mcp', '.playwright-e2e-mcp', '.auth', 'tests/generated', 'tests/.flaky-marker', 'tests/heal.spec.ts', 'tests/slot.spec.ts', 'tests/order.spec.ts', 'tests/.slot-lock', 'playwright', 'playwright-quarantine.json'];
   for (const entry of stale) {
     rmSync(path.join(fixtureRoot, entry), { recursive: true, force: true });
   }
@@ -407,7 +452,7 @@ async function phaseHandshake(client, pkg) {
   const withSchema = tools.filter((tool) => tool.outputSchema?.type === 'object').map((tool) => tool.name).sort();
   check(
     'the chained tools declare output schemas',
-    JSON.stringify(withSchema) === JSON.stringify(['audit-accessibility', 'audit-performance', 'audit-tests', 'bisect-failure', 'diagnose-flaky', 'get-failure', 'get-run-status', 'list-tests', 'run-test', 'suggest-fix', 'validate-selector']),
+    JSON.stringify(withSchema) === JSON.stringify(['audit-accessibility', 'audit-performance', 'audit-tests', 'bisect-failure', 'check-test-change', 'diagnose-flaky', 'get-failure', 'get-run-status', 'list-tests', 'quarantine', 'run-test', 'save-login', 'suggest-fix', 'validate-selector']),
     `got ${JSON.stringify(withSchema)}`,
   );
 }
@@ -573,6 +618,42 @@ async function phaseLivePage(client, origin) {
   const frameButton = await callTool(client, 'validate-selector', { url: `${origin}/frame`, selector: "locator('#pay').contentFrame().getByRole('button', { name: 'Pay' })" }, 60_000);
   check('validate-selector resolves locators inside an iframe', frameButton.result.structuredContent?.matches === 1, frameButton.text.slice(0, 400));
 
+  // save-login: password from the environment, a live authenticator code,
+  // a checked session file, reuse while valid, and a failed login reported.
+  const loginSteps = [
+    { type: 'fill', locator: "getByLabel('Email')", value: 'qa@example.com' },
+    { type: 'fill', locator: "getByLabel('Password')", value: '{{env:E2E_PASSWORD}}' },
+    { type: 'fill', locator: "getByLabel('One-time code')", value: '{{totp}}' },
+    { type: 'click', locator: "getByRole('button', { name: 'Sign in' })" },
+  ];
+  const loginVerify = { url: '/me', visible: "getByRole('button', { name: 'Sign out' })", notUrl: '/signin' };
+  const saved = await callTool(client, 'save-login', { url: `${origin}/signin`, actions: loginSteps, verify: loginVerify, totpSecretEnv: 'E2E_TOTP_SECRET' }, 90_000);
+  const authFile = path.join(fixtureRoot, 'playwright', '.auth', 'user.json');
+  const authText = existsSync(authFile) ? readFileSync(authFile, 'utf8') : '';
+  check(
+    'save-login logs in with an env password and a TOTP code, and saves a checked session',
+    saved.result.structuredContent?.status === 'saved' && saved.result.structuredContent?.valid === true && authText.includes('"member"'),
+    saved.text.slice(0, 600),
+  );
+  check('save-login keeps the password out of its output and the session file', !saved.text.includes(LOGIN_PASSWORD) && !authText.includes(LOGIN_PASSWORD), saved.text.slice(0, 300));
+  const reused = await callTool(client, 'save-login', { url: `${origin}/signin`, actions: loginSteps, verify: loginVerify, totpSecretEnv: 'E2E_TOTP_SECRET' }, 90_000);
+  check('save-login reuses a session that still works', reused.result.structuredContent?.status === 'valid' && reused.text.includes('STILL VALID'), reused.text.slice(0, 400));
+  const asMember = await callTool(client, 'inspect-page', { url: `${origin}/me`, storageState: 'playwright/.auth/user.json', view: 'locators' }, 60_000);
+  check('the saved session opens the signed-in page', !asMember.isError && asMember.text.includes('Sign out'), asMember.text.slice(0, 400));
+  const badLogin = await callTool(
+    client,
+    'save-login',
+    { url: `${origin}/signin`, actions: loginSteps.map((s, i) => (i === 1 ? { ...s, value: 'wrong-password' } : s)), verify: loginVerify, totpSecretEnv: 'E2E_TOTP_SECRET', name: 'wrong', reuse: false },
+    90_000,
+  );
+  check(
+    'save-login reports a failed login and writes no file',
+    badLogin.result.structuredContent?.valid === false && badLogin.text.includes('LOGIN FAILED') && !existsSync(path.join(fixtureRoot, 'playwright', '.auth', 'wrong.json')),
+    badLogin.text.slice(0, 400),
+  );
+  const blockedEnv = await callTool(client, 'save-login', { url: `${origin}/signin`, actions: [{ type: 'fill', locator: "getByLabel('Email')", value: '{{env:HOME}}' }], name: 'leak' }, 60_000);
+  check('save-login refuses environment variables outside the test-login allowlist', blockedEnv.isError && blockedEnv.text.includes('HOME'), blockedEnv.text.slice(0, 300));
+
   const loop = await callTool(client, 'inspect-page', { url: `${origin}/loop` }, 60_000);
   check('a redirect loop is a navigation failure, not a stopped server', loop.result.structuredContent?.error?.kind === 'NAVIGATION_FAILED' && loop.text.includes('redirects in a loop'), loop.text.slice(0, 400));
 
@@ -680,6 +761,21 @@ async function phaseTestRuns(client, origin) {
   const consistent = await callTool(client, 'diagnose-flaky', { runs: 2 }, 360_000);
   contains('diagnose-flaky defaults to the last failed test', consistent.text, '## Flaky diagnosis — `tests/fail.spec.ts` × 2 runs');
   contains('diagnose-flaky verdict: CONSISTENTLY FAILING', consistent.text, '**CONSISTENTLY FAILING** — failed all 2 run(s)');
+
+  // Quarantine: the broken test keeps running and is reported, but stops
+  // failing the run; removing the entry makes it block again.
+  const noOwner = await callTool(client, 'quarantine', { action: 'add', index: 1 }, 30_000);
+  check('quarantine refuses an entry without an owner and reason', noOwner.isError && noOwner.text.includes('owner'), noOwner.text.slice(0, 300));
+  const quarantined = await callTool(client, 'quarantine', { action: 'add', index: 1, owner: '@qa', reason: 'cart API 404, tracked in #42', days: 7 }, 30_000);
+  check('quarantine adds the last failure with an owner and expiry', quarantined.result.structuredContent?.status === 'added' && quarantined.text.includes('@qa') && quarantined.text.includes('› checkout save button surfaces cart errors until'), quarantined.text.slice(0, 400));
+  const shielded = await callTool(client, 'run-test', { testFiles: ['tests/fail.spec.ts'], retryOnFailure: false }, 180_000);
+  check(
+    'a quarantined failure is reported but does not fail the run',
+    shielded.result.structuredContent?.ok === true && shielded.result.structuredContent?.run?.quarantined === 1 && shielded.text.includes('1 quarantined') && shielded.text.includes('save-btn'),
+    shielded.text.slice(0, 600),
+  );
+  const released = await callTool(client, 'quarantine', { action: 'remove', test: 'tests/fail.spec.ts › checkout save button surfaces cart errors' }, 30_000);
+  check('quarantine remove ends it', released.result.structuredContent?.status === 'removed' && released.result.structuredContent?.total === 0, released.text.slice(0, 300));
 
   rmSync(path.join(fixtureRoot, 'tests', '.flaky-marker'), { force: true });
   const flaky = await callTool(client, 'run-test', { testFiles: ['tests/flaky.spec.ts'] }, 180_000);
@@ -871,6 +967,19 @@ async function phaseHistoryAndHeal(client) {
     JSON.stringify(proposed).slice(0, 400),
   );
   check('suggest-fix without apply leaves the file alone', readFileSync(healPath, 'utf8').includes("getByTestId('buy-button')"), 'file changed');
+  // Heal guard: the locator fix keeps the assertion; a "fix" that deletes it is blocked.
+  const healText = readFileSync(healPath, 'utf8');
+  const fairFix = await callTool(client, 'check-test-change', { file: 'tests/heal.spec.ts', after: healText.replace("getByTestId('buy-button')", "getByRole('button', { name: 'Buy now' })") }, 30_000);
+  check('check-test-change passes a locator fix that keeps the assertion', fairFix.result.structuredContent?.status === 'OK' && fairFix.result.structuredContent?.ok === true, fairFix.text.slice(0, 400));
+  const cheat = healText.split('\n').filter((line) => !line.includes('expect(')).join('\n');
+  const cheated = await callTool(client, 'check-test-change', { file: 'tests/heal.spec.ts', after: cheat }, 30_000);
+  check(
+    'check-test-change blocks a fix that deletes the assertion',
+    cheated.result.structuredContent?.status === 'BLOCK' && cheated.result.structuredContent?.findings?.some((f) => f.rule === 'assertions-removed'),
+    cheated.text.slice(0, 400),
+  );
+  const skipped = await callTool(client, 'check-test-change', { file: 'tests/heal.spec.ts', after: healText.replace("test('buy", "test.skip('buy") }, 30_000);
+  check('check-test-change blocks a fix that skips the test', skipped.result.structuredContent?.status === 'BLOCK', skipped.text.slice(0, 400));
   const applied = await callTool(client, 'suggest-fix', { apply: true }, 180_000);
   contains('suggest-fix apply verifies with a re-run', applied.text, '### ✅ Verified');
   check('suggest-fix reports verified: true', applied.result.structuredContent?.verified === true, JSON.stringify(applied.result.structuredContent).slice(0, 300));
@@ -938,7 +1047,7 @@ async function phaseProfilesAndCi(origin) {
     profiled.notify('notifications/initialized');
     const list = await profiled.request('tools/list', {}, 30_000);
     const names = (list.tools ?? []).map((tool) => tool.name).sort();
-    const expected = ['diagnose-flaky', 'get-failure', 'get-run-status', 'inspect-page', 'list-tests', 'run-test', 'suggest-fix'];
+    const expected = ['check-test-change', 'diagnose-flaky', 'get-failure', 'get-run-status', 'inspect-page', 'list-tests', 'run-test', 'suggest-fix'];
     check('--tools=core,inspect-page exposes exactly that set', JSON.stringify(names) === JSON.stringify(expected), `got ${JSON.stringify(names)}`);
   } finally {
     await profiled.stop();
@@ -1027,6 +1136,8 @@ async function main() {
       PW_MCP_PROJECT_ROOT: fixtureRoot,
       FIXTURE_PORT: new URL(fixture.origin).port,
       PW_MCP_SHUFFLE_SEEDS: '1,4,2',
+      E2E_PASSWORD: LOGIN_PASSWORD,
+      E2E_TOTP_SECRET: LOGIN_TOTP_SECRET,
       LOG_LEVEL: process.env.E2E_LOG_LEVEL ?? 'warn',
       FORCE_COLOR: '0',
     },

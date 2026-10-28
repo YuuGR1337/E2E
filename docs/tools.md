@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [Hosted endpoint](hosted-endpoint.md) · [Development](development.md)
 
-Every argument of the sixteen tools, with example output. The short list is in the
+Every argument of the nineteen tools, with example output. The short list is in the
 [README](../README.md#tools).
 
 ## Structured results
@@ -463,12 +463,19 @@ the full `run-test` result, which also becomes the last run for `get-failure` an
 | `test` | string | Substring of a test's file or title (filters every view) |
 | `lastRuns` | number | How many recent runs to analyze (default `30`) |
 | `limit` | number | Max rows (default `15`) |
+| `source` | `local` \| `cloud` \| `both` | Only with a Pro key: `both` (default then) merges this machine's runs with CI runs from Pro Cloud; `local` or `cloud` for one side. Without a key it is always `local` |
 
 Every `run-test`, `diagnose-flaky`, `suggest-fix` and `load-report` run appends a line to
 `<project>/.playwright-e2e-mcp/history.jsonl` (the folder carries its own `.gitignore`;
 nothing leaves the machine; `PW_MCP_HISTORY=0` turns it off). The flaky view separates
 tests that flip between pass and fail, tests that started failing and stayed red
 (regressed), and tests that failed every run (broken), each with a `PFFP~` timeline.
+
+**Pro (optional, paid):** with `PW_MCP_PRO_KEY` and `PW_MCP_PRO_URL` set, CI jobs upload
+their runs (`playwright-e2e-mcp upload`, or the Action's `pro-key` input) and this tool
+reads them too, filed under the GitHub repository name (`PW_MCP_PRO_PROJECT` overrides it).
+If Pro Cloud cannot be reached it falls back to the local history and says so. Without a
+key, no request is ever made.
 
 Each run records the commit it tested (from git locally, from the report's metadata for CI
 runs). The `commits` view uses that to say where a test went bad: the first failing or flaky
@@ -542,6 +549,94 @@ Download the artifacts first, for example with
 paths are mapped onto your checkout, so failures point at local files and get-failure can
 open each trace. The run becomes the last run, so the usual loop works on it: `get-failure`,
 then `suggest-fix` (which re-runs the fix locally), or `diagnose-flaky`.
+
+## `save-login`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `url` | string | The login page (required) |
+| `actions` | step[] | The login steps, as with `inspect-page` (`fill`, `click`, `press`, `wait`…). Fill values may use `{{env:NAME}}` and `{{totp}}` |
+| `verify` | object | How to tell the session works: `url` (page to open, e.g. `/account`), `visible` (a locator only a signed-in user sees, e.g. `getByRole('button', { name: 'Sign out' })`), `notUrl` (the session is bad if the page lands on a URL containing this, e.g. `/login`) |
+| `name` | string | Session name (default `user`); saved to `playwright/.auth/<name>.json` |
+| `path` | string | Where to save the storageState JSON inside the project (overrides `name`) |
+| `totpSecretEnv` | string | Environment variable that holds the authenticator secret (base32, or an `otpauth://totp/…` URI), for `{{totp}}` |
+| `reuse` | boolean | Keep a saved session that still passes `verify` instead of logging in again (default `true`) |
+| `headers` / `viewport` / `actionTimeoutMs` | — | As with `inspect-page` |
+| `timeoutMs` | number | Overall limit (default `60000`) |
+
+Logs in once in a real browser and saves the session as a Playwright `storageState` file,
+the same file `test.use({ storageState })`, a setup project and the page tools
+(`storageState: "playwright/.auth/user.json"`) read. On the next call it opens `verify.url`
+with the saved session first: if the check still passes it reports **STILL VALID** and does
+not log in again; an expired session logs in again and the file is replaced.
+
+**Secrets stay out of the chat.** The password is never a tool argument: a fill value of
+`{{env:E2E_PASSWORD}}` is read from the server's environment inside the browser process, and
+`{{totp}}` is the current 6-digit code computed from the secret in `totpSecretEnv` (RFC 6238;
+if the code is about to roll over it waits for the next one). Only test-looking variables can
+be read: `E2E_*`, `TEST_*`, `PW_*`, `PLAYWRIGHT_*` and `LOGIN_*` (not `PW_MCP_HTTP_TOKEN`),
+plus any names you list in `PW_MCP_LOGIN_ENV`. A page that asks the agent to type
+`{{env:AWS_SECRET_ACCESS_KEY}}` gets an error instead. The result never echoes the values.
+
+The result is **SAVED**, **STILL VALID** or **LOGIN FAILED** (the steps ran but `verify`
+did not pass; no file is written), with the cookie count, the first cookie expiry and
+warnings: an empty session, a password typed as a literal instead of `{{env:…}}`, or a
+session file that is not git-ignored. Not available on the HTTP bridge without a token.
+
+## `check-test-change`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `base` | string | Git ref to compare with: `HEAD` (default: the uncommitted changes) or e.g. `origin/main` (the whole branch) |
+| `files` | string[] | Only these files (default: every changed spec file and Playwright config) |
+| `file` + `after` | string | Check one proposed change before it is written: the spec file and the fix's full new content |
+
+The **heal guard**. An AI fix can make a red test green by checking less: deleting the
+assertion that failed, skipping the test, or swapping `toHaveText('Paid')` for
+`toBeVisible()`. This compares each changed test with its old self (tests are matched by
+describe path and title, so a renamed test is compared, not reported as removed):
+
+| Verdict | Rules |
+| --- | --- |
+| **BLOCK** | `assertions-removed` (a test has fewer `expect`s), `test-removed`, `skip-added` (`test.skip`, `fixme`, `fail`, a conditional skip, `describe.skip`), `only-added`, `file-deleted` |
+| **WARN** | `assertion-softened` (`expect.soft`), `weaker-matcher` (e.g. `toHaveText` → `toBeVisible`, `toEqual` → `toBeTruthy`), `hard-wait-added`, `force-added`, `error-swallowed` (`.catch(() => {})`, empty `catch`), `timeout-raised` (above 2× and 30 s), `retries-raised`, `screenshot-tolerance-raised` |
+
+Strings and comments are masked before the scan, so `"expect("` in a string does not
+count. The structured result is `{ ok, status: 'OK' | 'WARN' | 'BLOCK', findings[] }`;
+`ok` is `false` only on BLOCK. Run it after `suggest-fix` or any agent edit, before
+committing; in CI use `playwright-e2e-mcp guard --base origin/main` (exit 1 on BLOCK) or
+the Action's `guard: true` input.
+
+## `quarantine`
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `action` | `list` \| `add` \| `remove` | Default `list` |
+| `test` | string | The test as `file › title` (as `get-failure` and `analyze-history` print it); a trailing `[project]` is ignored |
+| `file` + `title` | string | Or name it this way; `title` may be the last parts of the title path |
+| `index` | number | `add`: the Nth failure of the last run |
+| `owner` | string | `add`: who will fix it (required) |
+| `reason` | string | `add`: why it is flaky, or the issue link (required) |
+| `days` | number | `add`: how long it counts, 1–90 (default `14`) |
+
+Retries hide a flaky test; skipping hides it for good. A quarantined test still runs and is
+still reported, but its failure no longer fails `run-test`, `get-run-status` or the `ci`
+command: the run reads **✅ PASSED (1 quarantined failure)** with a 🧊 section naming the
+owner and the expiry. After its last day the entry expires and the failure blocks again
+(⏰), so quarantine cannot become a graveyard. Adding a test that is already quarantined
+extends it with the new reason. A run that timed out or crashed never passes this way.
+
+The list lives in `playwright-quarantine.json` at the project root. Commit it, so CI and the
+team share it:
+
+```json
+{
+  "version": 1,
+  "entries": [
+    { "file": "tests/cart.spec.ts", "title": "adds an item", "owner": "@ann", "reason": "animation race, #212", "until": "2026-11-11", "added": "2026-10-28" }
+  ]
+}
+```
 
 ## Edge cases handled
 

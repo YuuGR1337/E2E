@@ -3,6 +3,8 @@
  * results (stats, failures, diagnostics, hints).
  */
 
+import { quarantineLines, readQuarantine, splitFailures } from '../utils/quarantine.js';
+import type { QuarantineSplit } from '../utils/quarantine.js';
 import { z } from 'zod';
 import { PlaywrightMcpError } from '../types/index.js';
 import type { RunTestOptions, RunTestResult, TestFailure, ToolContext, ToolResponse } from '../types/index.js';
@@ -143,15 +145,36 @@ function renderFailures(failures: TestFailure[]): string[] {
   return lines;
 }
 
-export function renderRunResult(result: RunTestResult, root: string): string {
+/**
+ * Did the run pass once quarantined failures are set aside? Only test
+ * failures can be quarantined: a crash, a timeout or a config error still
+ * fails the run.
+ */
+export function passesWithQuarantine(result: RunTestResult, split: QuarantineSplit | undefined): boolean {
+  if (result.ok) return true;
+  if (!split || split.quarantined.length === 0 || split.blocking.length > 0) return false;
+  return !result.timedOut && !result.errorKind && !result.partial && !result.failuresTruncated;
+}
+
+/** Split a run's failures by the project's quarantine list; undefined when there is none. */
+export async function quarantineSplit(root: string, result: RunTestResult): Promise<QuarantineSplit | undefined> {
+  if (result.failures.length === 0) return undefined;
+  const list = await readQuarantine(root).catch(() => undefined);
+  if (!list || list.entries.length === 0) return undefined;
+  return splitFailures(result.failures, list);
+}
+
+export function renderRunResult(result: RunTestResult, root: string, split?: QuarantineSplit): string {
   const flakyCount = result.stats?.flaky ?? 0;
   const status = result.ok
     ? flakyCount > 0
       ? `✅ PASSED (${flakyCount} flaky)`
       : '✅ PASSED'
-    : result.timedOut
-      ? '⏱️ KILLED (timeout)'
-      : '❌ FAILED';
+    : passesWithQuarantine(result, split)
+      ? `✅ PASSED (${split!.quarantined.length} quarantined failure${split!.quarantined.length === 1 ? '' : 's'})`
+      : result.timedOut
+        ? '⏱️ KILLED (timeout)'
+        : '❌ FAILED';
   const lines: string[] = [`## Playwright run — ${status}`, ''];
   lines.push(`**Command:** \`${result.command}\``);
 
@@ -184,6 +207,8 @@ export function renderRunResult(result: RunTestResult, root: string): string {
       '',
     );
   }
+
+  if (split) lines.push(...quarantineLines(split));
 
   if (result.failures.length > 0) {
     const more = result.failuresTruncated ? ' (showing the first ones)' : '';
@@ -295,6 +320,11 @@ export const runTestTool = {
         durationMs: result.durationMs,
         failures: result.failures.length,
       });
-      return toolText(renderRunResult(result, root), { ok: result.ok, run: runData(result) });
+      const split = await quarantineSplit(root, result);
+      const passed = passesWithQuarantine(result, split);
+      return toolText(renderRunResult(result, root, split), {
+        ok: passed,
+        run: { ...runData(result), ...(split?.quarantined.length ? { quarantined: split.quarantined.length } : {}) },
+      });
     }),
 };

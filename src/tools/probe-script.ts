@@ -447,6 +447,41 @@ async function attachLocators(page, elements, budget, keep) {
 
 /* ---------------- page actions (reach a state before inspecting) ---------------- */
 
+/* save-login: {{env:NAME}} and {{totp}} in fill values. The values come
+   in through this child's environment, never through the config file, and
+   a TOTP code is generated at the moment it is typed. */
+function totpCode(t, atMs) {
+  const crypto = require('node:crypto');
+  const counter = Math.floor(atMs / 1000 / t.period);
+  const msg = Buffer.alloc(8);
+  msg.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+  msg.writeUInt32BE(counter % 0x100000000, 4);
+  const h = crypto.createHmac(t.algorithm.toLowerCase(), Buffer.from(t.key, 'hex')).update(msg).digest();
+  const o = h[h.length - 1] & 0x0f;
+  const bin = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(bin % Math.pow(10, t.digits)).padStart(t.digits, '0');
+}
+
+async function fillValue(raw) {
+  const text = raw || '';
+  if (text.indexOf('{{') < 0) return text;
+  const values = JSON.parse(process.env.PW_MCP_FILL_VALUES || '{}');
+  const totp = process.env.PW_MCP_TOTP ? JSON.parse(process.env.PW_MCP_TOTP) : null;
+  if (totp && /\{\{\s*totp\s*\}\}/.test(text)) {
+    // A code with under 3 seconds left may expire before the form is sent.
+    const left = totp.period - (Math.floor(Date.now() / 1000) % totp.period);
+    if (left < 3) await new Promise((resolve) => setTimeout(resolve, left * 1000 + 200));
+  }
+  return text.replace(/\{\{\s*(totp|env:([A-Za-z0-9_]+))\s*\}\}/g, (m, all, name) => {
+    if (all === 'totp') {
+      if (!totp) throw new Error('{{totp}} needs the totp option');
+      return totpCode(totp, Date.now());
+    }
+    if (!Object.prototype.hasOwnProperty.call(values, name)) throw new Error('No value for {{env:' + name + '}}');
+    return values[name];
+  });
+}
+
 async function runActions(page, actions, timeout) {
   const done = [];
   for (let i = 0; i < actions.length; i += 1) {
@@ -459,7 +494,7 @@ async function runActions(page, actions, timeout) {
         case 'click': await loc.click({ timeout: timeout }); break;
         case 'dblclick': await loc.dblclick({ timeout: timeout }); break;
         case 'hover': await loc.hover({ timeout: timeout }); break;
-        case 'fill': await loc.fill(a.value || '', { timeout: timeout }); break;
+        case 'fill': await loc.fill(cfg.mode === 'login' ? await fillValue(a.value) : (a.value || ''), { timeout: timeout }); break;
         case 'press': if (loc) await loc.press(a.value, { timeout: timeout }); else await page.keyboard.press(a.value); break;
         case 'check': await loc.check({ timeout: timeout }); break;
         case 'uncheck': await loc.uncheck({ timeout: timeout }); break;
@@ -790,6 +825,63 @@ function summariseRequests(requests, timings, pageUrl) {
           await page.waitForTimeout(Math.min(cfg.settleMs || 1000, 2000));
         }
       }
+    }
+
+    if (cfg.mode === 'login') {
+      // Check the session (after logging in, or a saved one), then save it.
+      const v = cfg.loginVerify || null;
+      let verified = null;
+      let verifyNote = '';
+      if (v) {
+        if (v.url) {
+          const resp = await page.goto(v.url, { waitUntil: cfg.waitUntil || 'domcontentloaded', timeout: cfg.gotoTimeout || 15000 });
+          if (resp) httpStatus = resp.status();
+        }
+        verified = true;
+        if (v.visible) {
+          try {
+            await resolveChain(page, v.visible).first().waitFor({ state: 'visible', timeout: cfg.waitTimeout || 10000 });
+          } catch (waitErr) {
+            verified = false;
+            verifyNote = 'the signed-in marker did not appear';
+          }
+        }
+        if (verified && v.notUrl && page.url().indexOf(v.notUrl) >= 0) {
+          verified = false;
+          verifyNote = 'the page went to ' + page.url();
+        }
+      }
+      const state = await context.storageState();
+      const now = Date.now() / 1000;
+      const expiries = state.cookies.map((c) => c.expires).filter((e) => e > 0);
+      // The parent writes the file (inside the project, never through a symlink).
+      const keep = !cfg.loginCheckOnly && verified !== false;
+      send({
+        ok: true,
+        data: {
+          elementCount: 0,
+          matchCount: 0,
+          elements: [],
+          finalUrl: page.url(),
+          title: await page.title(),
+          actionsDone: actionsDone,
+          routeHits: routeHits,
+          httpStatus: httpStatus,
+          durationMs: Date.now() - cfg.startedAt,
+          login: {
+            verified: verified,
+            verifyNote: verifyNote,
+            state: keep ? state : undefined,
+            cookies: state.cookies.length,
+            sessionCookies: state.cookies.length - expiries.length,
+            origins: state.origins.length,
+            firstExpiry: expiries.length ? Math.min.apply(null, expiries) : null,
+            expired: expiries.filter((e) => e <= now).length,
+          },
+        },
+      });
+      await closeBrowser();
+      process.exit(0);
     }
 
     if (cfg.mode === 'screenshot') {

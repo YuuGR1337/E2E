@@ -178,6 +178,8 @@ export async function runCi(argv: string[]): Promise<number> {
   const result = ctx.store.lastRun?.result;
   const failures = result?.failures ?? [];
   let code = result === undefined || run.isError ? 2 : result.ok ? 0 : failures.length > 0 ? 1 : 2;
+  // Every failure is quarantined (and none expired): report them, pass the build.
+  if (code === 1 && (structured(run)?.run?.quarantined ?? 0) > 0 && structured(run)?.ok === true) code = 0;
 
   const fixes: FixSuggestion[] = [];
   const suggest = options.review || options.suggestions ? Math.max(options.suggest, 1) : options.suggest;

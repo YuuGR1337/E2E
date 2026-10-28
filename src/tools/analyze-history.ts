@@ -21,6 +21,8 @@ import {
   testStats,
 } from '../utils/run-history.js';
 import type { HistoryEntry, TestStats } from '../utils/run-history.js';
+import { PlaywrightMcpError } from '../types/index.js';
+import { fetchRuns, mergeRuns, proProjectName, proSettings } from '../utils/pro-client.js';
 import {
   clipLines,
   formatDuration,
@@ -38,6 +40,10 @@ const analyzeHistoryInput = z.object({
   test: z.string().optional().describe('Filter: substring of file or title'),
   lastRuns: z.number().int().min(2).max(500).optional().describe('Runs to analyze (default 30)'),
   limit: z.number().int().min(1).max(100).optional(),
+  source: z
+    .enum(['local', 'cloud', 'both'])
+    .optional()
+    .describe("With a Pro key: 'both' (default) merges this machine's runs with CI runs from Pro Cloud; 'cloud' or 'local' for one side"),
   projectRoot: z.string().optional(),
 });
 
@@ -60,10 +66,35 @@ function bar(rate: number, width = 10): string {
   return `${'█'.repeat(filled)}${'░'.repeat(width - filled)}`;
 }
 
-function header(entries: HistoryEntry[], requested: number): string[] {
+function header(entries: HistoryEntry[], requested: number, note?: string): string[] {
   const first = entries[0]?.at.slice(0, 16).replace('T', ' ');
   const last = entries[entries.length - 1]?.at.slice(0, 16).replace('T', ' ');
-  return [`**Window:** last ${entries.length} run(s)${entries.length < requested ? ` (all recorded)` : ''}, ${first} → ${last} UTC`, ''];
+  return [`**Window:** last ${entries.length} run(s)${entries.length < requested ? ` (all recorded)` : ''}, ${first} → ${last} UTC`, ...(note ? [note] : []), ''];
+}
+
+/**
+ * Local runs, plus Pro Cloud runs when a Pro key is set. Without a key this
+ * is exactly the local history and nothing leaves the machine.
+ */
+async function loadEntries(root: string, requested: number, source: AnalyzeHistoryInput['source']): Promise<{ entries: HistoryEntry[]; note?: string }> {
+  const settings = proSettings();
+  const wanted = source ?? (settings ? 'both' : 'local');
+  if (wanted === 'local') return { entries: await readHistory(root, requested) };
+  if (!settings) {
+    throw new PlaywrightMcpError('Cloud history needs a Pro key', 'INVALID_INPUT', {
+      hint: "Set PW_MCP_PRO_KEY and PW_MCP_PRO_URL, or use source: 'local'.",
+    });
+  }
+  const local = wanted === 'both' ? await readHistory(root, requested) : [];
+  const project = await proProjectName(root);
+  try {
+    const cloud = await fetchRuns(settings, project, requested);
+    const entries = mergeRuns(local, cloud, requested);
+    return { entries, note: `**Source:** ${wanted === 'both' ? `${local.length} local run(s) + ` : ''}${cloud.length} Pro Cloud run(s) for \`${project}\`` };
+  } catch (error) {
+    if (wanted === 'cloud') throw error;
+    return { entries: local, note: `**Source:** local only; Pro Cloud failed: ${(error as Error).message}` };
+  }
 }
 
 export const analyzeHistoryTool = {
@@ -77,7 +108,9 @@ export const analyzeHistoryTool = {
       const requested = args.lastRuns ?? 30;
       const limit = args.limit ?? 15;
       const view = args.view ?? (args.test ? 'test' : 'flaky');
-      let entries = await readHistory(root, requested);
+      const loaded = await loadEntries(root, requested, args.source);
+      let entries = loaded.entries;
+      const sourceNote = loaded.note;
 
       if (entries.length === 0) {
         return toolText(
@@ -102,7 +135,7 @@ export const analyzeHistoryTool = {
       const lines: string[] = [];
       if (view === 'test') {
         const stats = testStats(entries);
-        lines.push(`## Test history${args.test ? ` — "${args.test}"` : ''}`, '', ...header(entries, requested));
+        lines.push(`## Test history${args.test ? ` — "${args.test}"` : ''}`, '', ...header(entries, requested, sourceNote));
         if (stats.length === 0) {
           lines.push('_No recorded runs include a matching test._');
           return toolText(lines.join('\n'));
@@ -130,7 +163,7 @@ export const analyzeHistoryTool = {
 
       if (view === 'patterns') {
         const patterns = failurePatterns(entries);
-        lines.push('## Failure patterns', '', ...header(entries, requested));
+        lines.push('## Failure patterns', '', ...header(entries, requested, sourceNote));
         if (patterns.length === 0) {
           lines.push('✅ No failures recorded in this window.');
           return toolText(lines.join('\n'));
@@ -156,7 +189,7 @@ export const analyzeHistoryTool = {
 
       if (view === 'slow') {
         const slow = slowTests(entries);
-        lines.push('## Slowest tests', '', ...header(entries, requested));
+        lines.push('## Slowest tests', '', ...header(entries, requested, sourceNote));
         if (slow.length === 0) {
           lines.push('_No passing runs with durations recorded yet._');
           return toolText(lines.join('\n'));
@@ -177,7 +210,7 @@ export const analyzeHistoryTool = {
 
       if (view === 'trend') {
         const days = dailyTrend(entries);
-        lines.push('## Stability by day', '', ...header(entries, requested));
+        lines.push('## Stability by day', '', ...header(entries, requested, sourceNote));
         lines.push('| day (UTC) | runs | tests run | failed | flaky | unstable | |', '| --- | ---: | ---: | ---: | ---: | ---: | --- |');
         for (const d of days.slice(-limit)) {
           lines.push(`| ${d.day} | ${d.runs} | ${d.executions} | ${d.failed} | ${d.flaky} | ${pct(d.unstableRate)} (${d.unstableTests} tests) | ${bar(d.unstableRate)} |`);
@@ -200,7 +233,7 @@ export const analyzeHistoryTool = {
 
       if (view === 'commits') {
         const breaks = breakingCommits(entries);
-        lines.push('## When each test went bad', '', ...header(entries, requested));
+        lines.push('## When each test went bad', '', ...header(entries, requested, sourceNote));
         if (breaks.length === 0) {
           lines.push('✅ No test is failing or flaky now.');
           return toolText(lines.join('\n'));
@@ -239,7 +272,7 @@ export const analyzeHistoryTool = {
       }
 
       const ranking = rankFlaky(entries);
-      lines.push('## Flakiness ranking', '', ...header(entries, requested));
+      lines.push('## Flakiness ranking', '', ...header(entries, requested, sourceNote));
       if (ranking.flaky.length === 0 && ranking.broken.length === 0 && ranking.regressed.length === 0) {
         lines.push(`✅ No unstable tests: every recorded test behaved the same way across these runs (${ranking.stable} stable).`);
         if (entries.length < 3) lines.push('', '> Few runs recorded so far; flakiness needs repetition to show. Run the suite again or use `args: ["--repeat-each=5"]`.');

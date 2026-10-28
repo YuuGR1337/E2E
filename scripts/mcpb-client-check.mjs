@@ -35,6 +35,7 @@ const EXPECTED_TOOLS = [
   'audit-performance',
   'audit-tests',
   'bisect-failure',
+  'check-test-change',
   'compare-visual-state',
   'diagnose-flaky',
   'generate-e2e-test',
@@ -43,7 +44,9 @@ const EXPECTED_TOOLS = [
   'inspect-page',
   'list-tests',
   'load-report',
+  'quarantine',
   'run-test',
+  'save-login',
   'suggest-fix',
   'validate-selector',
 ];

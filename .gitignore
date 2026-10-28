@@ -33,6 +33,8 @@ coverage/
 .flaky-marker
 **/tests/generated/
 e2e/fixture/.auth/
+e2e/fixture/playwright/
+e2e/fixture/playwright-quarantine.json
 e2e/fixture/tests/heal.spec.ts
 
 # Local run history written by the server inside a project
