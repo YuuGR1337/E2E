@@ -11,7 +11,8 @@
  *
  * Route A, playwright-e2e-mcp: run-test → suggest-fix → suggest-fix apply
  * (which re-runs the test to verify). Counted: tool definitions + the three
- * results.
+ * results, once with every tool loaded and once with the `core` profile
+ * (PW_MCP_TOOLS=core), which holds all the tools this fix uses.
  *
  * Route B, Playwright MCP + shell: `playwright test` output (list reporter),
  * browser_navigate + browser_snapshot (the accessibility snapshot the agent
@@ -127,6 +128,9 @@ async function main() {
     copyFileSync(specTemplate, spec);
     const ours = await new Client(process.execPath, [path.join(repoRoot, 'dist', 'index.js')], { ...env, PW_MCP_PROJECT_ROOT: project, PW_MCP_HISTORY: '0', LOG_LEVEL: 'silent' }, repoRoot).init();
     const oursDefs = await ours.toolsJson();
+    const core = await new Client(process.execPath, [path.join(repoRoot, 'dist', 'index.js')], { PW_MCP_PROJECT_ROOT: project, PW_MCP_TOOLS: 'core', LOG_LEVEL: 'silent' }, repoRoot).init();
+    const coreDefs = await core.toolsJson();
+    core.close();
     const run = await ours.call('run-test', { testFiles: ['tests/checkout.spec.ts'], retryOnFailure: false });
     const fix = await ours.call('suggest-fix', {});
     const applied = await ours.call('suggest-fix', { apply: true });
@@ -154,21 +158,21 @@ async function main() {
     const passing = await rawTestRun(env);
     samples.pw = { failing, navigate, snapshot, passing };
 
-    const a = { defs: tokens(oursDefs), steps: tokens(run) + tokens(fix) + tokens(applied) };
+    const a = { defs: tokens(oursDefs), coreDefs: tokens(coreDefs), steps: tokens(run) + tokens(fix) + tokens(applied) };
     const b = { defs: tokens(pwDefs), steps: tokens(failing) + tokens(navigate) + tokens(snapshot) + tokens(passing) };
-    rows.push(['Tool definitions (sent with every request)', a.defs, b.defs]);
-    rows.push(['Run the failing test', tokens(run), tokens(failing)]);
-    rows.push(['Find the element / propose the fix', tokens(fix), tokens(navigate) + tokens(snapshot)]);
-    rows.push(['Apply + verify (re-run)', tokens(applied), tokens(passing)]);
-    rows.push(['**Total for one fix**', a.defs + a.steps, b.defs + b.steps]);
+    rows.push(['Tool definitions (sent with every request)', a.coreDefs, a.defs, b.defs]);
+    rows.push(['Run the failing test', tokens(run), tokens(run), tokens(failing)]);
+    rows.push(['Find the element / propose the fix', tokens(fix), tokens(fix), tokens(navigate) + tokens(snapshot)]);
+    rows.push(['Apply + verify (re-run)', tokens(applied), tokens(applied), tokens(passing)]);
+    rows.push(['**Total for one fix**', a.coreDefs + a.steps, a.defs + a.steps, b.defs + b.steps]);
 
     const date = new Date().toISOString().slice(0, 10);
     const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     const pwPkg = JSON.parse(readFileSync(path.join(repoRoot, 'node_modules', 'playwright', 'package.json'), 'utf8'));
     const table = [
-      '| Step | playwright-e2e-mcp | Playwright MCP + shell |',
-      '| --- | ---: | ---: |',
-      ...rows.map(([label, x, y]) => `| ${label} | ${x.toLocaleString('en-US')} | ${y.toLocaleString('en-US')} |`),
+      '| Step | playwright-e2e-mcp (`core` tools) | playwright-e2e-mcp (all tools) | Playwright MCP + shell |',
+      '| --- | ---: | ---: | ---: |',
+      ...rows.map(([label, ...counts]) => `| ${label} | ${counts.map((n) => n.toLocaleString('en-US')).join(' | ')} |`),
     ].join('\n');
     const md = [
       '# Token benchmark: diagnosing one drifted locator',
@@ -176,6 +180,8 @@ async function main() {
       `Run ${date} with playwright-e2e-mcp ${pkg.version} and Playwright ${pwPkg.version} (\`playwright mcp\`). Reproduce with \`npm run build && node bench/token-benchmark.mjs\`.`,
       '',
       'Scenario: a storefront page (navigation, search, 24 product cards, cart, footer) renamed its checkout button test id from `checkout-button` to `checkout-btn`; the spec still uses the old one. Tokens are estimated as characters ÷ 4 for both routes.',
+      '',
+      `The \`core\` column loads only the ${JSON.parse(coreDefs).length} tools in \`PW_MCP_TOOLS=core\` (or \`--tools=core\`); the all-tools column loads all ${JSON.parse(oursDefs).length}. Tool definitions are sent with every request, so load only the profiles you use.`,
       '',
       table,
       '',

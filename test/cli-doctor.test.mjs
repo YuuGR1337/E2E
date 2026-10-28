@@ -27,6 +27,7 @@ test('an empty folder fails on the config and on Playwright, with fixes', async 
     assert.equal(byName(report, 'MCP clients').status, 'warn');
     assert.match(byName(report, 'Agent skill').fix, /init/);
     assert.match(renderDoctorReport(report), /2 problems to fix/);
+    assert.doesNotMatch(renderDoctorReport(report), /star/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -54,6 +55,7 @@ test('a set-up project passes the config, install, tests, clients and skill chec
     assert.deepEqual(byName(report, 'Test files'), { name: 'Test files', status: 'ok', detail: '1 found' });
     assert.match(byName(report, 'MCP clients').detail, /Claude Code/);
     assert.equal(byName(report, 'Agent skill').status, 'ok');
+    if (report.ok) assert.match(renderDoctorReport(report), /A star helps other Playwright users find it: https:\/\/github\.com\/xsignon-secure\/E2E\n$/);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });

@@ -18,6 +18,12 @@ Your Playwright test fails. Your AI finds out why, fixes it, and proves the fix 
 </p>
 
 <p align="center">
+  <img src="https://raw.githubusercontent.com/xsignon-secure/E2E/main/docs/demo.gif" alt="An agent runs the failing checkout test, suggest-fix proposes a locator proven on the page at failure, and the applied fix is re-run and verified green" width="760">
+</p>
+
+<p align="center">⭐ <b>If it saves you a debugging session, <a href="https://github.com/xsignon-secure/E2E">a star</a> helps other Playwright users find it.</b></p>
+
+<p align="center">
   <a href="#getting-started">Getting started</a> ·
   <a href="#tools">Tools</a> ·
   <a href="docs/tools.md">Tool reference</a> ·
@@ -57,8 +63,9 @@ red at HEAD ─▶ bisect-failure (runs it across git history, names the breakin
 - **Honest.** It won't paper over a real bug to make a test pass.
 - **Works on CI failures too.** Load a CI job's report and traces and get the same diagnosis and fixes.
 - **Flakiness with evidence.** Names the flaky test, whether it's a race, shared state or test order, and the seed that reproduces it.
-- **Lean.** Finding and fixing a broken locator took about **5,300 tokens** versus about **7,400**
-  with Playwright MCP plus a shell ([benchmark](#benchmark)).
+- **Lean.** With the `core` tool set, finding and fixing a broken locator took about **5,500 tokens**
+  versus about **7,900** with Playwright MCP plus a shell. All 19 tools add about 16k tokens of
+  definitions to every request, so load only the [profiles](#configuration) you use ([benchmark](#benchmark)).
 - **Free and open source.** MIT, no account, no API key, no telemetry. Every tool is free; an optional paid Pro only adds hosted CI history.
 
 ## 🚀 What only this MCP does
@@ -333,7 +340,7 @@ Every argument and example output is in the **[tool reference](docs/tools.md)**.
 MCP tool annotations (`readOnlyHint`, `destructiveHint`, …), so clients can show accurate safety
 prompts.
 
-**Only need the fix loop?** `--tools=core` (or `PW_MCP_TOOLS=core`) exposes six tools and cuts the
+**Only need the fix loop?** `--tools=core` (or `PW_MCP_TOOLS=core`) exposes seven tools and cuts the
 tool-definition context by about three quarters. Other profiles: `triage`, `inspect`, `author`.
 
 <details>
@@ -423,7 +430,7 @@ npx -y playwright-e2e-mcp guard --base origin/main   # exit 1 on BLOCK; --strict
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
-| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, heal guard, list), `triage` (run, status, failure, CI report, flaky, history, test audit, bisect, quarantine, heal guard, list), `inspect` (page, selector, accessibility, performance, visual, login), `author` (list, page, selector, generate, run, login, heal guard). All nineteen tool definitions cost about 14k tokens of context per request; `core` costs about 4k (11k and 2.6k with `PW_MCP_OUTPUT_SCHEMAS=0`) |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, heal guard, list), `triage` (run, status, failure, CI report, flaky, history, test audit, bisect, quarantine, heal guard, list), `inspect` (page, selector, accessibility, performance, visual, login), `author` (list, page, selector, generate, run, login, heal guard). All nineteen tool definitions cost about 16k tokens of context per request; `core` costs about 5k (12k and 2.6k with `PW_MCP_OUTPUT_SCHEMAS=0`) |
 | `PW_MCP_OUTPUT_SCHEMAS` | on | `0` leaves the output schemas out of the tool list to save context. Results still carry `structuredContent` (see [Structured results](docs/tools.md#structured-results)) |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
@@ -461,16 +468,21 @@ on a storefront page and fixes it two ways: with this server (`run-test` → `su
 apply) and with Playwright MCP plus a shell (`playwright test`, `browser_navigate` +
 `browser_snapshot`, edit, re-run). Latest result ([full output](bench/RESULTS.md)):
 
-| Step | playwright-e2e-mcp | Playwright MCP + shell |
-| --- | ---: | ---: |
-| Tool definitions (sent with every request) | 4,565 | 4,726 |
-| Run the failing test | 246 | 325 |
-| Find the element / propose the fix | 260 | 2,286 |
-| Apply + verify (re-run) | 257 | 34 |
-| **Total for one fix** | 5,328 | 7,371 |
+| Step | playwright-e2e-mcp (`core` tools) | playwright-e2e-mcp (all tools) | Playwright MCP + shell |
+| --- | ---: | ---: | ---: |
+| Tool definitions (sent with every request) | 4,826 | 16,121 | 5,225 |
+| Run the failing test | 244 | 244 | 323 |
+| Find the element / propose the fix | 232 | 232 | 2,286 |
+| Apply + verify (re-run) | 230 | 230 | 34 |
+| **Total for one fix** | 5,532 | 16,827 | 7,868 |
 
-Tokens are characters ÷ 4. The Playwright MCP route is a lower bound: it assumes the agent
-picks the right locator from the snapshot on the first try, which the server does for it here.
+Tokens are characters ÷ 4. The work itself (run, diagnose, fix, verify) takes about 700 tokens
+here versus about 2,600 with Playwright MCP, but tool definitions are sent with every request:
+with all 19 tools loaded they outweigh that saving, so set `PW_MCP_TOOLS=core` (or another
+profile) when you only fix failing tests. The Playwright MCP route is a lower bound: it assumes
+the agent picks the right locator from the snapshot on the first try, which the server does for
+it here. Run 2026-10-28 with 0.7.0 and Playwright 1.64.1; re-run with
+`npm run build && node bench/token-benchmark.mjs`.
 
 ## Demo
 
