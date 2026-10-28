@@ -33,6 +33,7 @@ const runSchema = z.object({
   partial: z.boolean(),
   failures: z.array(failureSchema),
   failuresTruncated: z.boolean().optional(),
+  quarantined: z.number().int().optional().describe('failures covered by an active quarantine entry (they do not fail the run)'),
 });
 
 const errorSchema = z.object({ kind: z.string(), message: z.string(), hint: z.string().optional() });
@@ -127,6 +128,9 @@ export const toolOutputSchema = z.object({
   matches: z.number().int().optional().describe('elements matched; actions need exactly 1'),
   locator: z.string().optional().describe('a verified unique locator for the first match'),
   httpStatus: z.number().int().optional().describe("the page's HTTP status"),
+  // save-login
+  path: z.string().optional().describe('save-login: the storageState file, relative to the project'),
+  expiresAt: z.string().optional().describe('save-login: when the first session cookie expires (ISO)'),
 });
 
 export type StructuredResult = z.infer<typeof toolOutputSchema>;
@@ -177,11 +181,14 @@ const TOOL_FIELDS: Readonly<Record<string, ReadonlyArray<keyof StructuredResult>
   'audit-tests': ['findings', 'total', 'truncated', 'applied', 'verified'],
   'bisect-failure': ['status', 'firstBad', 'steps'],
   'validate-selector': ['url', 'valid', 'matches', 'locator', 'httpStatus'],
+  'save-login': ['status', 'valid', 'path', 'url', 'expiresAt'],
+  'check-test-change': ['status', 'findings', 'total'],
+  quarantine: ['status', 'total'],
 };
 
 /**
  * The output schema for one tool: the envelope plus only that tool's fields,
- * so tools/list does not repeat every tool's fields sixteen times. Tools
+ * so tools/list does not repeat every tool's fields nineteen times. Tools
  * with no fields of their own declare none (their results still carry the
  * envelope): each schema is context a client pays for on every request.
  */

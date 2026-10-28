@@ -278,3 +278,44 @@ mechanically. Files rank by findings weighted by their flaky rate in the history
 Runs in a temporary git worktree with the current `node_modules` linked in;
 untestable commits are skipped. `status` is `found`, `ambiguous`, `max-steps`,
 `not-failing` (passes at bad) or `good-fails`.
+
+## save-login (0.7.0+)
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `url` | string | Login page (required) |
+| `actions` | array | Login steps as in `inspect-page`; fill values may use `{{env:NAME}}` and `{{totp}}` |
+| `verify` | object | `url` (page to check, e.g. `/account`), `visible` (locator only a signed-in user sees), `notUrl` (bad if the URL contains it, e.g. `/login`) |
+| `name` / `path` | string | Saved to `playwright/.auth/<name>.json` (default `user`) or `path` |
+| `totpSecretEnv` | string | Variable holding the authenticator secret (base32 or `otpauth://`) |
+| `reuse` | boolean | Keep a saved session that still passes `verify` (default true) |
+
+`status` is `saved`, `valid` (reused, nothing typed) or `failed` (no file written).
+Only `E2E_*`, `TEST_*`, `PW_*`, `PLAYWRIGHT_*`, `LOGIN_*` and names in
+`PW_MCP_LOGIN_ENV` can be read through `{{env:…}}`.
+
+## check-test-change (0.7.0+)
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `base` | string | Git ref (default `HEAD`: the uncommitted changes; `origin/main` for the branch) |
+| `files` | string[] | Only these files |
+| `file` + `after` | string | Check a proposed full file content before writing it |
+
+`status` is `OK`, `WARN` or `BLOCK`; `ok` is false only on BLOCK. BLOCK: fewer
+assertions in a test, a removed or skipped test, `.only`, a deleted spec. WARN:
+`expect.soft`, a weaker matcher, `waitForTimeout`, `force: true`, a swallowed
+error, a raised timeout, retries or screenshot tolerance.
+
+## quarantine (0.7.0+)
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `action` | string | `list` (default), `add`, `remove` |
+| `test` | string | `'file › title'`; or `file` + `title`; or `index` (last run's failure) |
+| `owner` / `reason` | string | Required for `add` |
+| `days` | number | 1–90, default 14 |
+
+Stored in `playwright-quarantine.json` (commit it). A quarantined, unexpired
+failure is listed under 🧊 and does not fail `run-test` or `ci`; `run.quarantined`
+counts them. Expired entries block again.

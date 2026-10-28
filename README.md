@@ -69,6 +69,8 @@ page. None of them, as of October 2026, does the following. This one does:
 
 | Capability | What you get |
 | --- | --- |
+| 🛡️ **A guard against "fixes" that check less** | `check-test-change` compares a changed test with its old self and blocks a fix that went green by deleting an assertion, skipping the test or adding `.only`; it warns on weaker matchers, hard waits, forced clicks and swallowed errors. The same check runs in CI as `guard` |
+| 🧊 **Quarantine with an owner and an expiry** | `quarantine` keeps a flaky test running and reported while its failure stops blocking the build, with who fixes it, why, and the date it blocks again |
 | 🎯 **Find the commit that broke a test** | `bisect-failure` runs the test across your git history, in a temporary worktree that leaves your checkout alone, and names the first bad commit with its diff and the failure |
 | 🧪 **Flake-risk audit of your test code** | `audit-tests` finds hard waits, one-shot assertions, missing `await`s and fragile selectors. It ranks them by how flaky those tests really were, then applies the safe rewrites and re-runs them to prove them |
 | ✅ **Fixes that prove themselves** | `suggest-fix` swaps in a locator proven unique on the DOM at failure, re-runs the test and reverts if it's still red. It refuses to patch over a real app bug |
@@ -95,6 +97,9 @@ keeps your suite green.
 | ♿ | "Check this page for accessibility" | Runs axe-core (WCAG 2.2 AA) and returns each problem with a ready-to-paste locator and regression test. |
 | ⚡ | "Why is this page slow?" | Measures Web Vitals (LCP, CLS, INP, TBT) on desktop or a throttled phone, names the slow element and the elements that jump, and hands back a budget test. |
 | 🧪 | "Show me the error state" | Mocks API responses (500s, empty lists, slow calls) so the AI can inspect, audit or measure states that are hard to reach. |
+| 🔑 | "Log in and save the session" | Logs in once (password from an environment variable, **authenticator code generated from the TOTP secret**), checks the session works and saves it for tests and page tools; reuses it until it expires. The password never passes through the chat. |
+| 🛡️ | "Did that fix cheat?" | Compares the changed tests with git and blocks a fix that passes by deleting assertions or skipping tests. |
+| 🧊 | "Quarantine this flaky test" | Keeps it running and reported, stops it failing the build, with an owner and an expiry date. |
 | 🔐 | "Test the page after login" | Works behind sign-in with saved sessions, headers and click/fill steps, in Chromium, Firefox or WebKit, and can record or replay network traffic from a HAR file. |
 | 🤖 | "Do it in CI" | A [GitHub Action and `ci` command](#ci-github-action-and-ci-command) post the diagnosis, flaky verdict and fix diffs on your PR. |
 
@@ -253,8 +258,8 @@ Running and fixing your own tests needs your project, so use the local install f
 | --- | --- |
 | Skill only, any agent | `npx skills add xsignon-secure/E2E` |
 | MCP Registry | `io.github.xsignon-secure/E2E` ([listing](https://registry.modelcontextprotocol.io/)); registry-aware clients find it there |
-| Straight from GitHub, no npm | `npx -y github:xsignon-secure/E2E#v0.6.1` (pin a release tag) |
-| Release tarball | `npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.6.1/playwright-e2e-mcp-0.6.1.tgz` |
+| Straight from GitHub, no npm | `npx -y github:xsignon-secure/E2E#v0.7.0` (pin a release tag) |
+| Release tarball | `npm install -D https://github.com/xsignon-secure/E2E/releases/download/v0.7.0/playwright-e2e-mcp-0.7.0.tgz` |
 | Docker | `docker run -i --rm -v "$PWD:/work" ghcr.io/xsignon-secure/playwright-e2e-mcp` (published on each release; see [Development](docs/development.md#docker)) |
 | Local checkout | `"command": "node", "args": ["/path/to/E2E/dist/index.js"]` |
 
@@ -270,6 +275,16 @@ Run my Playwright tests and fix whatever fails.
 
 Your agent should run the suite, read the failure, and propose a fix it has re-run. To check the
 setup without your own tests, ask it to run `examples/sample-test.spec.ts` from this repo.
+
+## What's new in 0.7
+
+- **Log in once, safely:** `save-login` signs in (2FA codes included) with secrets read from the
+  environment, checks the session and saves it as a `storageState` file; it reuses the session
+  until it stops working.
+- **Heal guard:** `check-test-change` and `playwright-e2e-mcp guard` block a test "fix" that
+  passes by checking less (deleted assertions, skipped tests, `.only`).
+- **Flaky-test quarantine:** `quarantine` stops a known flaky test from failing the build for a
+  set time, with an owner and a reason, while it keeps running and being reported.
 
 ## What's new in 0.6
 
@@ -306,6 +321,9 @@ setup without your own tests, ask it to run `examples/sample-test.spec.ts` from 
 | `diagnose-flaky` | Run a failing test 2–10 times **with retries disabled** and return an evidence verdict: `CONSISTENTLY FAILING`, `FLAKY` or `NOT REPRODUCING`; tells parallelism and **test-order** bugs from races |
 | `analyze-history` | Rank flaky, regressed and broken tests from the local run history, group failures by cause, list the slowest tests, show stability by day, name **the commit where each test went bad**, or show one test's timeline |
 | `audit-tests` | Audit the **test code** for flake risks (hard waits, one-shot assertions instead of web-first ones, missing `await`s, `.only`, force clicks, `networkidle`, element handles, layout selectors), ranked by how flaky those tests have been in the run history; `fix: true` rewrites the mechanical ones, re-runs the files and reverts if they fail |
+| `save-login` | **Log in once and save the session** (`storageState`): steps with `{{env:E2E_PASSWORD}}` and `{{totp}}` (authenticator code from a secret in the environment), a check that the session works, and reuse until it expires; secrets never pass through the chat |
+| `check-test-change` | **Heal guard**: compare changed tests with git (or a proposed fix with the file) and BLOCK deleted assertions, skipped or removed tests and `.only`; WARN on weaker matchers, hard waits, `force: true`, swallowed errors and raised timeouts or retries |
+| `quarantine` | Quarantine a flaky test with an owner, a reason and an expiry (default 14 days): it keeps running and being reported, but its failure no longer fails `run-test` or `ci` until the entry expires. Stored in `playwright-quarantine.json` |
 | `bisect-failure` | **Find the commit that broke a test**: binary-search git history between a good and a bad commit, running the test at each step in a temporary worktree (your checkout is untouched), and report the first bad commit, what it changed and how the test failed |
 
 Two **prompts** package the main workflows for clients that show them as slash commands:
@@ -375,7 +393,7 @@ steps:
   - uses: actions/setup-node@v6
     with: { node-version: 24 }
   - run: npm ci && npx playwright install --with-deps chromium
-  - uses: xsignon-secure/E2E@v0.6.1
+  - uses: xsignon-secure/E2E@v0.7.0
     with:
       flaky-runs: 3      # 0 skips the flaky verdict
       suggest: 2         # suggest-fix diffs for the first 2 failures
@@ -383,7 +401,19 @@ steps:
 ```
 
 Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`, `review`,
-`verify-fixes`, `fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`, `report`.
+`verify-fixes`, `guard`, `fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`,
+`report`, `guard`.
+
+Quarantined tests (`playwright-quarantine.json`, see [`quarantine`](docs/tools.md#quarantine))
+are honoured here too: when every failure is quarantined and unexpired, `ci` exits `0` and the
+report lists them.
+
+**Heal guard in CI.** `guard: true` checks the PR's changed tests against the base branch first
+and fails the job if a test was made to pass by checking less. Without the Action:
+
+```bash
+npx -y playwright-e2e-mcp guard --base origin/main   # exit 1 on BLOCK; --strict fails on warnings too
+```
 
 ## Configuration
 
@@ -393,10 +423,11 @@ Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`, `review`,
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PW_MCP_PROJECT_ROOT` | server cwd | Default project root for every tool |
-| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, list), `triage` (run, status, failure, CI report, flaky, history, test audit, bisect, list), `inspect` (page, selector, accessibility, performance, visual), `author` (list, page, selector, generate, run). All sixteen tool definitions cost about 12k tokens of context per request; `core` costs about 4k (10k and 2.3k with `PW_MCP_OUTPUT_SCHEMAS=0`) |
+| `PW_MCP_TOOLS` | all | Which tools to expose, as tool names and/or profiles, comma separated (same as the `--tools=` flag). Profiles: `core` (run, status, failure, fix, flaky, heal guard, list), `triage` (run, status, failure, CI report, flaky, history, test audit, bisect, quarantine, heal guard, list), `inspect` (page, selector, accessibility, performance, visual, login), `author` (list, page, selector, generate, run, login, heal guard). All nineteen tool definitions cost about 14k tokens of context per request; `core` costs about 4k (11k and 2.6k with `PW_MCP_OUTPUT_SCHEMAS=0`) |
 | `PW_MCP_OUTPUT_SCHEMAS` | on | `0` leaves the output schemas out of the tool list to save context. Results still carry `structuredContent` (see [Structured results](docs/tools.md#structured-results)) |
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
+| `PW_MCP_LOGIN_ENV` | — | Extra environment variables `save-login` may type through `{{env:NAME}}`, comma separated. Without it only `E2E_*`, `TEST_*`, `PW_*`, `PLAYWRIGHT_*` and `LOGIN_*` are allowed |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |
 | `PW_MCP_ALLOWED_ROOTS` | — | Extra directories a caller may pass as `projectRoot` (`:`-separated, `;` on Windows). Anything outside these and the default root is rejected |
 | `PW_MCP_HTTP_TOKEN` | — | HTTP bridge only: bearer token that unlocks all tools: 16+ characters, 32+ recommended (see [Hosted endpoint](docs/hosted-endpoint.md)) |

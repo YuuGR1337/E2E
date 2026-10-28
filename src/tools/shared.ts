@@ -699,7 +699,7 @@ export function loginHint(finalUrl: string | undefined, state: ResolvedPageState
 /* ------------------------------------------------------------------ */
 
 export interface BrowserScriptConfig extends Omit<ResolvedPageState, never> {
-  mode: 'inspect' | 'validate' | 'screenshot' | 'heal' | 'a11y' | 'perf';
+  mode: 'inspect' | 'validate' | 'screenshot' | 'heal' | 'a11y' | 'perf' | 'login';
   projectRoot: string;
   /** Page to open; omitted when rendering a snapshot. */
   url?: string;
@@ -736,6 +736,9 @@ export interface BrowserScriptConfig extends Omit<ResolvedPageState, never> {
   mobile?: boolean;
   /** perf: ms to keep observing after load so late shifts and LCP land. */
   settleMs?: number;
+  /** login: how to tell the session works, and whether to only check it. */
+  loginVerify?: { url?: string; visible?: LocatorCall[]; notUrl?: string };
+  loginCheckOnly?: boolean;
   startedAt: number;
 }
 
@@ -772,6 +775,22 @@ export interface BrowserScriptData {
   routeHits?: number[];
   /** HTTP status of the page's main document, when it was fetched over the network. */
   httpStatus?: number;
+  /** mode 'login': the session check and what the session holds. */
+  login?: LoginScan;
+}
+
+export interface LoginScan {
+  /** null when no check was asked for. */
+  verified: boolean | null;
+  verifyNote?: string;
+  /** The storageState to save; absent when checking only or the check failed. */
+  state?: unknown;
+  cookies: number;
+  sessionCookies: number;
+  origins: number;
+  /** Earliest cookie expiry, in Unix seconds. */
+  firstExpiry: number | null;
+  expired: number;
 }
 
 export interface PerformanceResource {
@@ -859,7 +878,7 @@ export interface BrowserScriptOutcome {
  */
 export async function runBrowserScript(
   config: BrowserScriptConfig,
-  options: { timeoutMs?: number; signal?: AbortSignal },
+  options: { timeoutMs?: number; signal?: AbortSignal; env?: Record<string, string> },
 ): Promise<BrowserScriptOutcome> {
   let serverless;
   try {
@@ -894,7 +913,7 @@ export async function runBrowserScript(
       [scriptPath, configPath],
       {
         cwd: config.projectRoot,
-        env: childEnv({ FORCE_COLOR: '0', ...serverless?.env }),
+        env: childEnv({ FORCE_COLOR: '0', ...serverless?.env, ...options.env }),
         timeoutMs: options.timeoutMs ?? 45_000,
         signal: options.signal,
       },

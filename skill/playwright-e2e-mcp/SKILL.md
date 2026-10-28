@@ -1,6 +1,6 @@
 ---
 name: playwright-e2e-mcp
-description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server, using structured run results grouped by root cause, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, per-test flaky verdicts that separate parallelism, test-order and timing bugs, signed-in page inspection with network mocks and HAR replay, aria snapshots, tests written by walking the flow on the live page, CI report diagnosis, WCAG accessibility audits, Web Vitals performance audits and local run history with the commit that broke each test, plus a guide to writing tests that stay green. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why a CI run failed, find out why a test is flaky or which tests are unstable or slow, repair a selector that no longer matches, write or review a Playwright test, check a page for accessibility, performance or visual regressions.
+description: Runs, debugs and fixes Playwright end-to-end tests through the playwright-e2e-mcp server: run results grouped by root cause, trace-based failure diagnostics, verified locators, self-healing fixes that re-run and revert if still red, a heal guard that blocks fixes which pass by checking less, per-test flaky verdicts (parallelism, test order, timing), an owned, expiring flaky-test quarantine, saved logins with 2FA codes, signed-in page inspection with network mocks, tests written by walking the flow, CI report diagnosis, accessibility and Web Vitals audits and run history with the commit that broke each test. Use when the user asks to run Playwright tests, fix a failing or broken e2e test, find out why CI failed, find flaky, unstable or slow tests, repair a selector, write or review a Playwright test, log in for tests, or check a page for accessibility, performance or visual regressions.
 ---
 
 # Playwright E2E with playwright-e2e-mcp
@@ -13,7 +13,7 @@ and concrete next steps. It can also propose and apply a verified fix for a brok
 locator, inspect pages behind a login, run long suites in the background and keep
 a local history of every run.
 
-This skill is written for playwright-e2e-mcp 0.6.1 and works with 0.2.0 or
+This skill is written for playwright-e2e-mcp 0.7.0 and works with 0.2.0 or
 newer. If `suggest-fix`, `get-run-status` or `analyze-history` is missing, the
 server is older than 0.2.0: use the steps that do not need those tools and tell
 the user to update it. `diagnose-flaky`'s per-test table and `isolate` option
@@ -21,7 +21,8 @@ arrived in 0.3.0; `audit-accessibility`, `diagnose-flaky`'s `order` option and
 root-cause grouping in `run-test` arrived in 0.4.0; `audit-performance`,
 `load-report`, network mocks (`routes`), `har`, `browser`, `inspect-page`'s
 `view: "aria"`, `generate-e2e-test`'s `steps`, the `slow`, `trend` and `commits`
-history views and strict-mode fixes in `suggest-fix` arrived in 0.5.0.
+history views and strict-mode fixes in `suggest-fix` arrived in 0.5.0;
+`save-login`, `check-test-change` and `quarantine` arrived in 0.7.0.
 
 ## Before you start
 
@@ -29,8 +30,8 @@ history views and strict-mode fixes in `suggest-fix` arrived in 0.5.0.
    `get-run-status`, `get-failure`, `load-report`, `suggest-fix`, `inspect-page`,
    `validate-selector`, `list-tests`, `generate-e2e-test`,
    `compare-visual-state`, `audit-accessibility`, `audit-performance`,
-   `diagnose-flaky` and
-   `analyze-history` (your client
+   `diagnose-flaky`, `analyze-history`, `audit-tests`, `bisect-failure`,
+   `save-login`, `check-test-change` and `quarantine` (your client
    may prefix them, e.g. `mcp__playwright-e2e__run-test`).
 2. If they are all missing, stop and tell the user the MCP server is not
    connected. Point them to `references/setup.md` for the one-line install for
@@ -39,7 +40,7 @@ history views and strict-mode fixes in `suggest-fix` arrived in 0.5.0.
    `references/writing-tests.md`. Do not fall back to shelling out to `npx playwright test` unless
    the user asks. If only some are missing, the server may run a smaller tool
    profile (`--tools=core` exposes `run-test`, `get-run-status`, `get-failure`,
-   `suggest-fix`, `diagnose-flaky` and `list-tests`); work with what is there and
+   `suggest-fix`, `diagnose-flaky`, `check-test-change` and `list-tests`); work with what is there and
    mention the profile when a task needs a page tool.
 3. Every tool except `get-run-status` takes an optional `projectRoot`. Leave it
    out unless the user works in a sub-project; the server defaults to `PW_MCP_PROJECT_ROOT` or its working
@@ -88,6 +89,10 @@ Follow these steps in order. Do not edit code before step 3.
    - Failed network request (4xx/5xx/no response) right before the failure: the
      backend is the likely cause; report it.
 4. **Fix** the spec or the app code, the smallest change that addresses the cause.
+   Then call `check-test-change` (0.7.0+; no arguments checks the uncommitted
+   changes). If it says **BLOCK**, the fix made the test pass by checking less
+   (a deleted assertion, a skip, `.only`): undo that part and fix the cause. Treat
+   **WARN** findings as things to justify to the user, not to wave through.
 5. **Re-run only what failed:** `run-test` with `{ "lastFailed": true }`. Repeat
    from step 2 until green.
 
@@ -136,6 +141,26 @@ fresh browser, so a signed-in page shows the login screen unless you pass state:
   (it must be installed; `audit-performance` stays Chromium-only).
 - `viewport`: `{ "width": 390, "height": 844 }` for mobile layouts.
 
+When there is no saved session yet, or it expired, call `save-login` (0.7.0+)
+instead of typing credentials into `actions` every time:
+
+```json
+{ "url": "http://localhost:3000/login",
+  "actions": [
+    { "type": "fill", "locator": "getByLabel('Email')", "value": "qa@example.com" },
+    { "type": "fill", "locator": "getByLabel('Password')", "value": "{{env:E2E_PASSWORD}}" },
+    { "type": "fill", "locator": "getByLabel('Code')", "value": "{{totp}}" },
+    { "type": "click", "locator": "getByRole('button', { name: 'Sign in' })" }],
+  "verify": { "url": "/account", "visible": "getByRole('button', { name: 'Sign out' })", "notUrl": "/login" },
+  "totpSecretEnv": "E2E_TOTP_SECRET" }
+```
+
+It saves `playwright/.auth/user.json` and reuses it while `verify` passes. Never
+put a password in a tool argument or in chat: ask the user to set it as an
+environment variable for the server (`E2E_*`, `TEST_*`, `LOGIN_*`, or a name
+listed in `PW_MCP_LOGIN_ENV`) and refer to it as `{{env:NAME}}`. `{{totp}}`
+types the current authenticator code from the secret in `totpSecretEnv`.
+
 When a response says the page landed on a login screen, retry with
 `storageState`. `suggest-fix` takes `storageState` and `headers` too when you heal
 against a live `url`.
@@ -182,6 +207,14 @@ one verdict **per test** (passes, failures, duration spread, first error):
   `audit-tests` (0.6.0+) finds these in the test code and names the ones in
   tests that flaked; `fix: true` applies the mechanical rewrites and re-runs them.
 - **NOT REPRODUCING**: passed every run. Report that the failure was one-off.
+
+If a FLAKY test cannot be fixed right away and is blocking other work, offer
+`quarantine` (0.7.0+) with `action: "add"`, the test (`index` of the last run's
+failure, or `"file › title"`), an `owner` and a `reason` (an issue link is best).
+It keeps running and being reported, but stops failing the run until the entry
+expires (default 14 days). Ask the user before adding one; never quarantine a
+CONSISTENTLY FAILING test, which is a real failure. `quarantine` with no
+arguments lists the entries and the expired ones.
 
 When a test is FLAKY and the suite runs in parallel, call `diagnose-flaky` again
 with `isolate: true`. It repeats the tests fully parallel, then repeats the
@@ -244,7 +277,7 @@ with the commit it tested. `analyze-history` views:
   `selector` for one region) returns the accessibility snapshot and a
   `toMatchAriaSnapshot` assertion to paste into a spec.
 - **Set up CI:** when the user wants the same diagnosis on every pull request,
-  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.6.1`) or the
+  point them to the GitHub Action (`uses: xsignon-secure/E2E@v0.7.0`) or the
   `npx -y playwright-e2e-mcp ci` command in `references/setup.md`. It writes the
   run, flaky verdicts and fix diffs to the job summary and one PR comment.
 - **Accessibility:** `audit-accessibility` with `url` runs axe-core against
@@ -284,6 +317,7 @@ When you finish, tell the user, in this order:
 
 - Do not raise timeouts, add retries, add `waitForTimeout`, or delete or
   `test.skip` a test to make a run green, unless the user explicitly asks.
+  `check-test-change` catches these; run it after every test edit.
 - Do not accept a new visual baseline without the user's confirmation.
 - Do not pass `allowExpectationUpdate: true` to `suggest-fix` unless the user
   confirms the new text is intended; a changed expected value can be a real bug.

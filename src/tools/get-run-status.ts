@@ -11,7 +11,7 @@ import { getBackgroundRun, listBackgroundRuns } from '../utils/run-registry.js';
 import type { BackgroundRun } from '../utils/run-registry.js';
 import { formatDuration, guard, toolText } from './shared.js';
 import { runData } from './structured.js';
-import { renderRunResult } from './run-test.js';
+import { passesWithQuarantine, quarantineSplit, renderRunResult } from './run-test.js';
 
 const getRunStatusInput = z.object({
   runId: z.string().optional(),
@@ -93,9 +93,15 @@ export const getRunStatusTool = {
       }
 
       const took = run.finishedAt ? formatDuration(run.finishedAt - run.startedAt) : '—';
+      const split = await quarantineSplit(run.projectRoot, run.result);
       return toolText(
-        [`_Background run \`${run.id}\` — ${run.status} after ${took}_`, '', renderRunResult(run.result, run.projectRoot), ...footer].join('\n'),
-        { ok: run.result.ok, runId: run.id, status: run.status, run: runData(run.result) },
+        [`_Background run \`${run.id}\` — ${run.status} after ${took}_`, '', renderRunResult(run.result, run.projectRoot, split), ...footer].join('\n'),
+        {
+          ok: passesWithQuarantine(run.result, split),
+          runId: run.id,
+          status: run.status,
+          run: { ...runData(run.result), ...(split?.quarantined.length ? { quarantined: split.quarantined.length } : {}) },
+        },
       );
     }),
 };

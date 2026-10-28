@@ -27,12 +27,15 @@ inputs:
   verify-fixes:
     description: Re-run each failing test with its fix applied and post only fixes that pass (the workspace is restored afterwards)
     default: 'true'
+  guard:
+    description: On a pull request, run the heal guard first and fail when changed tests were made to pass by checking less (deleted assertions, skipped or removed tests, .only)
+    default: 'false'
   fail-on-failure:
     description: Fail the step when tests fail
     default: 'true'
   version:
     description: playwright-e2e-mcp version to run from npm
-    default: 0.6.1
+    default: 0.7.0
   github-token:
     description: Token for the PR comment (needs pull-requests write)
     default: ${{ github.token }}
@@ -44,10 +47,29 @@ outputs:
   report:
     description: Path of the Markdown report
     value: ${{ steps.diagnose.outputs.report }}
+  guard:
+    description: Heal guard exit code (0 OK, 1 blocked, 2 could not run); empty when the guard is off
+    value: ${{ steps.guard.outputs.exit-code }}
 
 runs:
   using: composite
   steps:
+    - id: guard
+      if: inputs.guard == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      working-directory: ${{ inputs.project-root }}
+      env:
+        PW_E2E_VERSION: ${{ inputs.version }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        # The checkout is usually shallow: fetch just the base tip to compare with.
+        git fetch --no-tags --depth=1 origin "$BASE_REF"
+        set +e
+        npx -y "playwright-e2e-mcp@$PW_E2E_VERSION" guard --base FETCH_HEAD
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+
     - id: diagnose
       shell: bash
       working-directory: ${{ inputs.project-root }}
@@ -85,6 +107,12 @@ runs:
         # One comment per PR, edited on every run instead of piling up.
         gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$REPORT" --edit-last --create-if-none \
           || echo "::warning::Could not comment on the PR (token needs pull-requests: write)."
+
+    - if: steps.guard.outputs.exit-code == '1'
+      shell: bash
+      run: |
+        echo "::error::Heal guard blocked this change: a test was made to pass by checking less. See the job summary."
+        exit 1
 
     - if: inputs.fail-on-failure == 'true' && steps.diagnose.outputs.exit-code != '0'
       shell: bash

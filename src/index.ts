@@ -50,6 +50,15 @@ async function main(): Promise<void> {
     process.exitCode = await runDoctor(process.argv.slice(3));
     return;
   }
+  if (process.argv[2] === 'guard') {
+    const { runGuard, GUARD_USAGE } = await import('./cli/guard.js');
+    if (process.argv.includes('--help') || process.argv.includes('-h')) {
+      process.stdout.write(GUARD_USAGE);
+      return;
+    }
+    process.exitCode = await runGuard(process.argv.slice(3));
+    return;
+  }
   if (process.argv.includes('--version') || process.argv.includes('-v')) {
     process.stdout.write(`${SERVER_VERSION}\n`);
     return;
@@ -63,6 +72,7 @@ async function main(): Promise<void> {
         '       playwright-e2e-mcp ci [options]   run the suite and print a Markdown diagnosis (ci --help)',
         '       playwright-e2e-mcp init [options] add the server + agent skill to a project (init --help)',
         '       playwright-e2e-mcp doctor         check Node, Playwright, browsers and client setup (doctor --help)',
+        '       playwright-e2e-mcp guard [options] fail CI when changed tests check less (guard --help)',
         '',
         'Connects over stdio (MCP). Configuration via environment:',
         '  PW_MCP_PROJECT_ROOT        default project root (default: cwd)',
@@ -70,6 +80,7 @@ async function main(): Promise<void> {
         '                             (all | core | triage | inspect | author); same as --tools',
         '  PW_MCP_ALLOWED_ROOTS       extra roots callers may pass as projectRoot',
         '  PW_MCP_BLOCK_PRIVATE_URLS  1 = URL tools refuse private/loopback/metadata addresses',
+        '  PW_MCP_LOGIN_ENV           extra variables save-login may type ({{env:NAME}}), comma separated',
         '  LOG_LEVEL / MCP_LOG_LEVEL  debug | info | warn | error | silent (default: info)',
         '  LOG_FORMAT / MCP_LOG_FORMAT  text | json (default: text)',
         '',
