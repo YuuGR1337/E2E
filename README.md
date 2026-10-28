@@ -407,6 +407,8 @@ steps:
       # args: --browser chromium tests/checkout
 ```
 
+A complete, ready-to-copy workflow is available in [`examples/github-actions/playwright-e2e.yml`](examples/github-actions/playwright-e2e.yml), including artifact upload and commented options for `guard: true` and Pro Cloud.
+
 Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`, `review`,
 `verify-fixes`, `guard`, `pro-key`, `pro-url`, `fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`,
 `report`, `guard`.
