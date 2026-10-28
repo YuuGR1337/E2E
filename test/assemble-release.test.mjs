@@ -311,6 +311,7 @@ test('a signed release states the signer, the fingerprint and the certificate', 
   assert.match(body, /### Commits/);
   assert.match(body, /<summary>2 commits from v0\.0\.1 to v[\d.]+<\/summary>/);
   assert.match(body, /- `abc1234` Fix the thing/);
+  assert.match(body, /\[a star on GitHub\]\(https:\/\/github\.com\/xsignon-secure\/E2E\)/);
   rmSync(dir, { recursive: true, force: true });
 });
 

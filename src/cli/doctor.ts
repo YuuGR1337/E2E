@@ -194,6 +194,8 @@ export async function runDoctorChecks(projectRoot: string, home = os.homedir()):
   return { version: SERVER_VERSION, projectRoot, checks, ok: !checks.some((c) => c.status === 'fail') };
 }
 
+const REPO_URL = 'https://github.com/xsignon-secure/E2E';
+
 const MARK: Record<CheckStatus, string> = { ok: '✓', warn: '!', fail: '✗' };
 
 export function renderDoctorReport(report: DoctorReport): string {
@@ -213,6 +215,8 @@ export function renderDoctorReport(report: DoctorReport): string {
         ? `Ready, with ${warned} suggestion${warned === 1 ? '' : 's'} above.`
         : 'Everything is ready.',
   );
+  // Only on a working setup: asking for a star while the tools can't run is no help to anyone.
+  if (!failed) lines.push('', `Like it? A star helps other Playwright users find it: ${REPO_URL}`);
   return `${lines.join('\n')}\n`;
 }
 

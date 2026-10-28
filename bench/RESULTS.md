@@ -1,16 +1,18 @@
 # Token benchmark: diagnosing one drifted locator
 
-Run 2026-10-09 with playwright-e2e-mcp 0.1.4 and Playwright 1.63.0 (`playwright mcp`). Reproduce with `npm run build && node bench/token-benchmark.mjs`.
+Run 2026-10-28 with playwright-e2e-mcp 0.7.0 and Playwright 1.64.1 (`playwright mcp`). Reproduce with `npm run build && node bench/token-benchmark.mjs`.
 
 Scenario: a storefront page (navigation, search, 24 product cards, cart, footer) renamed its checkout button test id from `checkout-button` to `checkout-btn`; the spec still uses the old one. Tokens are estimated as characters ÷ 4 for both routes.
 
-| Step | playwright-e2e-mcp | Playwright MCP + shell |
-| --- | ---: | ---: |
-| Tool definitions (sent with every request) | 4,565 | 4,726 |
-| Run the failing test | 246 | 325 |
-| Find the element / propose the fix | 260 | 2,286 |
-| Apply + verify (re-run) | 257 | 34 |
-| **Total for one fix** | 5,328 | 7,371 |
+The `core` column loads only the 7 tools in `PW_MCP_TOOLS=core` (or `--tools=core`); the all-tools column loads all 19. Tool definitions are sent with every request, so load only the profiles you use.
+
+| Step | playwright-e2e-mcp (`core` tools) | playwright-e2e-mcp (all tools) | Playwright MCP + shell |
+| --- | ---: | ---: | ---: |
+| Tool definitions (sent with every request) | 4,826 | 16,121 | 5,225 |
+| Run the failing test | 244 | 244 | 323 |
+| Find the element / propose the fix | 232 | 232 | 2,286 |
+| Apply + verify (re-run) | 230 | 230 | 34 |
+| **Total for one fix** | 5,532 | 16,827 | 7,868 |
 
 Fixed and verified by playwright-e2e-mcp without an edit by the agent: **yes**.
 
@@ -40,8 +42,6 @@ Route B is a lower bound: it assumes the agent reads one snapshot, writes the ri
  });
 ```
 
-Other candidates: `getByRole('link', { name: 'Northwind Outfitters' })`, `getByRole('link', { name: 'New' })`
-
 > Next: call **suggest-fix** again with `apply: true` to write this change and re-run the test to verify it.
 ```
 
@@ -51,7 +51,7 @@ Other candidates: `getByRole('link', { name: 'Northwind Outfitters' })`, `getByR
 
 ```markdown
 ### Page
-- Page URL: http://127.0.0.1:39363/
+- Page URL: http://127.0.0.1:38795/
 - Page Title: Northwind Outfitters
 ### Snapshot
 ```yaml
