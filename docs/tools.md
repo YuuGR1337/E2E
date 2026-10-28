@@ -463,12 +463,19 @@ the full `run-test` result, which also becomes the last run for `get-failure` an
 | `test` | string | Substring of a test's file or title (filters every view) |
 | `lastRuns` | number | How many recent runs to analyze (default `30`) |
 | `limit` | number | Max rows (default `15`) |
+| `source` | `local` \| `cloud` \| `both` | Only with a Pro key: `both` (default then) merges this machine's runs with CI runs from Pro Cloud; `local` or `cloud` for one side. Without a key it is always `local` |
 
 Every `run-test`, `diagnose-flaky`, `suggest-fix` and `load-report` run appends a line to
 `<project>/.playwright-e2e-mcp/history.jsonl` (the folder carries its own `.gitignore`;
 nothing leaves the machine; `PW_MCP_HISTORY=0` turns it off). The flaky view separates
 tests that flip between pass and fail, tests that started failing and stayed red
 (regressed), and tests that failed every run (broken), each with a `PFFP~` timeline.
+
+**Pro (optional, paid):** with `PW_MCP_PRO_KEY` and `PW_MCP_PRO_URL` set, CI jobs upload
+their runs (`playwright-e2e-mcp upload`, or the Action's `pro-key` input) and this tool
+reads them too, filed under the GitHub repository name (`PW_MCP_PRO_PROJECT` overrides it).
+If Pro Cloud cannot be reached it falls back to the local history and says so. Without a
+key, no request is ever made.
 
 Each run records the commit it tested (from git locally, from the report's metadata for CI
 runs). The `commits` view uses that to say where a test went bad: the first failing or flaky

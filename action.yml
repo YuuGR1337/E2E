@@ -30,6 +30,12 @@ inputs:
   guard:
     description: On a pull request, run the heal guard first and fail when changed tests were made to pass by checking less (deleted assertions, skipped or removed tests, .only)
     default: 'false'
+  pro-key:
+    description: Optional Pro key (use a secret). When set, the run is uploaded to Pro Cloud CI history; when empty nothing is sent anywhere
+    default: ''
+  pro-url:
+    description: Pro Cloud address, required with pro-key
+    default: ''
   fail-on-failure:
     description: Fail the step when tests fail
     default: 'true'
@@ -96,6 +102,17 @@ runs:
         set -e
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         echo "report=$report" >> "$GITHUB_OUTPUT"
+
+    - if: always() && inputs.pro-key != ''
+      shell: bash
+      working-directory: ${{ inputs.project-root }}
+      env:
+        PW_E2E_VERSION: ${{ inputs.version }}
+        PW_MCP_PRO_KEY: ${{ inputs.pro-key }}
+        PW_MCP_PRO_URL: ${{ inputs.pro-url }}
+      run: |
+        # History upload is best effort: it never fails the job.
+        npx -y "playwright-e2e-mcp@$PW_E2E_VERSION" upload || echo "::warning::Could not upload the run to Pro Cloud."
 
     - if: inputs.comment == 'true' && github.event_name == 'pull_request' && steps.diagnose.outputs.exit-code != '0'
       shell: bash

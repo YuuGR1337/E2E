@@ -83,6 +83,7 @@ Set these in the server's `env` block. None of them are secrets except
 | `PW_MCP_STORAGE_STATE` | none | Default Playwright storageState JSON (inside the project) for the page tools, so signed-in pages open logged in |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Seeds for `diagnose-flaky`'s `order` pass (comma separated), to replay reported orders |
 | `PW_MCP_LOGIN_ENV` | — | Extra variables `save-login` may type through `{{env:NAME}}`, comma separated (default: only `E2E_*`, `TEST_*`, `PW_*`, `PLAYWRIGHT_*`, `LOGIN_*`) |
+| `PW_MCP_PRO_KEY` / `PW_MCP_PRO_URL` | — | Optional paid Pro: CI runs uploaded with `upload` show up in `analyze-history` (`source: both`). Unset = no network calls |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `<project>/.playwright-e2e-mcp/history.jsonl` (this turns off `analyze-history`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` or `silent` |
 | `PW_MCP_HTTP_TOKEN` | none | HTTP bridge only: bearer token that unlocks all tools |

@@ -59,7 +59,7 @@ red at HEAD ─▶ bisect-failure (runs it across git history, names the breakin
 - **Flakiness with evidence.** Names the flaky test, whether it's a race, shared state or test order, and the seed that reproduces it.
 - **Lean.** Finding and fixing a broken locator took about **5,300 tokens** versus about **7,400**
   with Playwright MCP plus a shell ([benchmark](#benchmark)).
-- **Free and open source.** MIT, no account, no API key, no telemetry, no paid tier.
+- **Free and open source.** MIT, no account, no API key, no telemetry. Every tool is free; an optional paid Pro only adds hosted CI history.
 
 ## 🚀 What only this MCP does
 
@@ -401,7 +401,7 @@ steps:
 ```
 
 Inputs: `project-root`, `args`, `flaky-runs`, `suggest`, `comment`, `review`,
-`verify-fixes`, `guard`, `fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`,
+`verify-fixes`, `guard`, `pro-key`, `pro-url`, `fail-on-failure`, `version`, `github-token`. Outputs: `exit-code`,
 `report`, `guard`.
 
 Quarantined tests (`playwright-quarantine.json`, see [`quarantine`](docs/tools.md#quarantine))
@@ -428,6 +428,7 @@ npx -y playwright-e2e-mcp guard --base origin/main   # exit 1 on BLOCK; --strict
 | `PW_MCP_STORAGE_STATE` | — | Default `storageState` file (inside the project) for the page tools |
 | `PW_MCP_SHUFFLE_SEEDS` | random | Comma-separated seeds for `diagnose-flaky`'s `order` pass, to replay the orders a diagnosis reported |
 | `PW_MCP_LOGIN_ENV` | — | Extra environment variables `save-login` may type through `{{env:NAME}}`, comma separated. Without it only `E2E_*`, `TEST_*`, `PW_*`, `PLAYWRIGHT_*` and `LOGIN_*` are allowed |
+| `PW_MCP_PRO_KEY` / `PW_MCP_PRO_URL` | — | Optional, paid: Pro key and Pro Cloud address. CI runs are uploaded with `playwright-e2e-mcp upload` (or the Action's `pro-key` / `pro-url` inputs) and `analyze-history` merges them with local runs. Unset (the default), nothing is ever sent anywhere |
 | `PW_MCP_HISTORY` | on | `0` stops recording runs to `.playwright-e2e-mcp/history.jsonl` |
 | `PW_MCP_ALLOWED_ROOTS` | — | Extra directories a caller may pass as `projectRoot` (`:`-separated, `;` on Windows). Anything outside these and the default root is rejected |
 | `PW_MCP_HTTP_TOKEN` | — | HTTP bridge only: bearer token that unlocks all tools: 16+ characters, 32+ recommended (see [Hosted endpoint](docs/hosted-endpoint.md)) |
@@ -480,9 +481,9 @@ A real `run-test` call served over stdio by `npx -y playwright-e2e-mcp` against 
 
 ## Free and open source
 
-- **MIT licensed.** Use it, change it, ship it in commercial work; no fees, no paid tier, no feature held back.
+- **MIT licensed.** Use it, change it, ship it in commercial work; no fees, no feature held back. The optional Pro plan adds a hosted service (CI run history across machines), not tools; nothing here needs it.
 - **No account, no API key, no sign-up.** `npx -y playwright-e2e-mcp init` is the whole setup.
-- **No telemetry.** It never phones home; your tests, traces and run history stay on your machine.
+- **No telemetry.** It never phones home; your tests, traces and run history stay on your machine unless you set a Pro key and upload them.
 - **Free dependencies only:** the MCP SDK (Apache-2.0), zod (MIT), axe-core (MPL-2.0) and the Playwright your project already has (Apache-2.0).
 - **Free to host yourself**, too: the HTTP bridge deploys to a free Vercel account (see [Hosted endpoint](docs/hosted-endpoint.md)).
 
